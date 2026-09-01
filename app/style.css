@@ -1,0 +1,77 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f9;
+  --card: #ffffff;
+  --line: #e3e6ea;
+  --text: #1a1d21;
+  --muted: #6b7280;
+  --accent: #0f766e;
+  --pending: #b45309;
+  --pending-bg: #fef3c7;
+  --accepted: #15803d;
+  --accepted-bg: #dcfce7;
+  --rejected: #b91c1c;
+  --rejected-bg: #fee2e2;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171a;
+    --card: #1d2126;
+    --line: #2d333b;
+    --text: #e8eaed;
+    --muted: #9aa4b2;
+    --accent: #2dd4bf;
+    --pending: #fbbf24;
+    --pending-bg: #422c06;
+    --accepted: #4ade80;
+    --accepted-bg: #0d2b17;
+    --rejected: #f87171;
+    --rejected-bg: #3b1112;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: 24px 16px 64px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, "Noto Sans Thai", "Helvetica Neue", sans-serif;
+  line-height: 1.6;
+}
+.wrap { max-width: 760px; margin: 0 auto; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+.sub { color: var(--muted); font-size: 14px; margin: 0 0 20px; }
+.bar {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+button {
+  font: inherit; cursor: pointer; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--card); color: var(--text);
+  padding: 7px 14px;
+}
+button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.card {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 12px; padding: 14px 16px; margin-bottom: 10px;
+}
+.row { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.name { font-weight: 600; }
+.meta { color: var(--muted); font-size: 13px; }
+.note { margin: 8px 0 0; font-size: 14px; }
+.badge {
+  font-size: 12px; padding: 3px 10px; border-radius: 999px; white-space: nowrap;
+}
+.badge.pending  { color: var(--pending);  background: var(--pending-bg); }
+.badge.accepted { color: var(--accepted); background: var(--accepted-bg); }
+.badge.rejected { color: var(--rejected); background: var(--rejected-bg); }
+.masked { color: var(--muted); font-style: italic; font-weight: 400; }
+.hint {
+  border: 1px dashed var(--line); border-radius: 10px;
+  padding: 12px 14px; color: var(--muted); font-size: 14px;
+}
+.hint code { background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+.log { font-size: 13px; color: var(--muted); white-space: pre-wrap; margin-top: 12px; }
+a { color: var(--accent); }

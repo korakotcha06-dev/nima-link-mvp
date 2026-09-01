@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NIMA Link — รายการคำขอหายา</title>
+<link rel="stylesheet" href="app/style.css">
+</head>
+<body>
+<div class="wrap">
+  <h1>รายการคำขอหายา</h1>
+  <p class="sub">NIMA Link · อ่านสดจาก Firestore — แก้ข้อมูลใน Firebase Console แล้วกด F5 หน้านี้จะเปลี่ยนตาม</p>
+
+  <div class="bar">
+    <span class="meta">ดูในมุมของ</span>
+    <button id="asBuyer" aria-pressed="true">ร้านยา / คลินิก</button>
+    <button id="asRep" aria-pressed="false">ผู้แทนยา</button>
+  </div>
+
+  <div id="list"></div>
+  <p class="log" id="log"></p>
+</div>
+
+<script type="module">
+import { collection, getDocs, orderBy, query } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
+import { db, STATUS, isConfigured } from "./app/db.js";
+
+const listEl = document.getElementById("list");
+const logEl  = document.getElementById("log");
+const btnBuyer = document.getElementById("asBuyer");
+const btnRep   = document.getElementById("asRep");
+
+let viewAs = "buyer";
+let rows = [];
+
+const badgeClass = {
+  [STATUS.PENDING]:  "pending",
+  [STATUS.ACCEPTED]: "accepted",
+  [STATUS.REJECTED]: "rejected",
+};
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// เส้นแดงข้อ 6 ของโปรเจกต์ — ผู้แทนไม่เห็นว่าเป็นร้านไหน จนกว่าจะกดรับคำขอ
+// สัปดาห์นี้ยังบังคับที่ชั้นการแสดงผลก่อน ของจริงต้องเป็น security rules ในสัปดาห์ที่ 8
+function buyerLabel(r) {
+  if (viewAs === "rep" && r.status !== STATUS.ACCEPTED) {
+    return `<span class="masked">ร้านในเขต ${esc(r.buyerArea || "-")} (ยังไม่เปิดเผยชื่อ)</span>`;
+  }
+  return esc(r.buyerName);
+}
+
+function render() {
+  if (!rows.length) {
+    listEl.innerHTML = `<p class="hint">ยังไม่มีคำขอในฐานข้อมูล — เปิด <code>seed.html</code> เพื่อใส่ข้อมูลตัวอย่างก่อน</p>`;
+    return;
+  }
+  listEl.innerHTML = rows.map(r => `
+    <article class="card">
+      <div class="row">
+        <span class="name">${buyerLabel(r)}</span>
+        <span class="badge ${badgeClass[r.status] || "pending"}">${esc(r.status)}</span>
+      </div>
+      <div class="meta">${esc(r.productName)} · ${esc(r.qty)} ${esc(r.unit || "หน่วย")} · ช่องทาง ${esc(r.buyerChannel)}</div>
+      ${r.note ? `<p class="note">${esc(r.note)}</p>` : ""}
+    </article>`).join("");
+}
+
+function setView(v) {
+  viewAs = v;
+  btnBuyer.setAttribute("aria-pressed", String(v === "buyer"));
+  btnRep.setAttribute("aria-pressed", String(v === "rep"));
+  render();
+}
+btnBuyer.onclick = () => setView("buyer");
+btnRep.onclick   = () => setView("rep");
+
+async function load() {
+  if (!isConfigured()) {
+    listEl.innerHTML = `<p class="hint">ยังไม่ได้ใส่ค่า Firebase — เปิด <code>app/firebase-config.js</code> แล้ววาง <code>firebaseConfig</code> ที่คัดลอกมาจาก Firebase Console</p>`;
+    return;
+  }
+  try {
+    const snap = await getDocs(query(collection(db, "requests"), orderBy("createdAt", "desc")));
+    // Document ID ไม่ใช่ field — ต้องประกอบ id กลับเข้ามาเองตอนอ่าน
+    rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    logEl.textContent = `อ่านมาได้ ${rows.length} รายการ · ${new Date().toLocaleString("th-TH")}`;
+    render();
+  } catch (e) {
+    listEl.innerHTML = `<p class="hint">อ่านข้อมูลไม่ได้: ${esc(e.message)}</p>`;
+  }
+}
+load();
+</script>
+</body>
+</html>

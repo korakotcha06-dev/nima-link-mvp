@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NIMA Link — ใส่ข้อมูลตัวอย่าง</title>
+<link rel="stylesheet" href="app/style.css">
+</head>
+<body>
+<div class="wrap">
+  <h1>ใส่ข้อมูลตัวอย่างลง Firestore</h1>
+  <p class="sub">กดครั้งเดียวพอ · กดซ้ำจะเขียนทับ document เดิม (ใช้ id คงที่) ไม่เกิดข้อมูลซ้ำ</p>
+
+  <p class="hint">
+    ชื่อร้าน ชื่อคน และชื่อบริษัททั้งหมดในชุดนี้เป็น <strong>ชื่อสมมติ</strong>
+    ไม่มีข้อมูลจริงของบุคคลอื่น เพราะ Firestore ที่เปิด Test mode ใครก็อ่านได้
+  </p>
+
+  <div class="bar"><button id="run" class="primary">ใส่ข้อมูลตัวอย่าง</button></div>
+  <p class="log" id="log"></p>
+</div>
+
+<script type="module">
+import { doc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
+import { db, STATUS, isConfigured } from "./app/db.js";
+
+const logEl = document.getElementById("log");
+const runBtn = document.getElementById("run");
+const say = m => { logEl.textContent += m + "\n"; };
+
+// โฟลเดอร์ประเภท — รายการยาที่ร้านเลือกได้
+const products = [
+  { id: "p01", name: "พาราเซตามอล 500 มก. (แผง 10 เม็ด)", company: "บจก. สมมติฟาร์มา เอ", channel: "OTC" },
+  { id: "p02", name: "ผงเกลือแร่ ORS ซองละ 5 ก.",          company: "บจก. สมมติฟาร์มา บี", channel: "OTC" },
+  { id: "p03", name: "น้ำเกลือล้างแผล NSS 100 มล.",         company: "บจก. สมมติฟาร์มา ซี", channel: "MC"  },
+];
+
+// คนที่ใช้ระบบ — ร้าน/คลินิก (ผู้สร้างคำขอ) กับผู้แทน (คนกดเปลี่ยนสถานะ)
+const users = [
+  { id: "u_shop01", name: "ร้านยาใจดีเภสัช",        role: "buyer", channel: "OTC", area: "ช้างเผือก" },
+  { id: "u_shop02", name: "คลินิกหมออรุณเวชกรรม",   role: "buyer", channel: "MC",  area: "สุเทพ" },
+  { id: "u_shop03", name: "ร้านยาบ้านสวนโอสถ",      role: "buyer", channel: "OTC", area: "ศรีภูมิ" },
+  { id: "u_rep01",  name: "คุณสมชาย (ผู้แทนอิสระ)", role: "rep",   channel: "OTC", area: "เมืองเชียงใหม่" },
+  { id: "u_rep02",  name: "คุณมาลี (ผู้แทนอิสระ)",   role: "rep",   channel: "MC",  area: "เมืองเชียงใหม่" },
+];
+
+// โฟลเดอร์หลัก — คำขอหายา · productName จดชื่อซ้ำไว้ ไม่ต้อง JOIN ตอนอ่าน
+const requests = [
+  { id: "r001", buyer: "u_shop01", product: "p01", qty: 20, unit: "แผง",
+    status: STATUS.PENDING,
+    note: "ของหมดตั้งแต่เมื่อวาน ลูกค้าถามทั้งวัน ถ้าได้ภายในพรุ่งนี้เช้าจะดีมาก รับได้ทีละ 20 แผงก่อน" },
+  { id: "r002", buyer: "u_shop02", product: "p03", qty: 12, unit: "ขวด",
+    status: STATUS.ACCEPTED,
+    note: "ใช้ล้างแผลผู้ป่วยนอก เดือนนี้คนไข้เยอะกว่าปกติ ขอราคาเป็นยกลังด้วยว่าต่างกันเท่าไหร่" },
+  { id: "r003", buyer: "u_shop03", product: "p02", qty: 100, unit: "ซอง",
+    status: STATUS.PENDING,
+    note: "หน้าร้อนขายดี เจ้าประจำเพิ่งขึ้นราคา อยากลองเทียบราคากับเจ้าอื่นดูก่อนสั่งล็อตหน้า" },
+  { id: "r004", buyer: "u_shop01", product: "p02", qty: 50, unit: "ซอง",
+    status: STATUS.REJECTED,
+    note: "ขอจำนวนไม่เยอะ ถ้ามีขั้นต่ำสูงกว่านี้บอกได้เลยครับ จะได้ไม่เสียเวลาทั้งสองฝ่าย" },
+  { id: "r005", buyer: "u_shop03", product: "p01", qty: 30, unit: "แผง",
+    status: STATUS.PENDING,
+    note: "เจ้าเดิมส่งช้าสองรอบติด อยากหาผู้แทนเจ้าใหม่ที่ส่งในเขตเมืองได้เร็วกว่านี้" },
+];
+
+async function seed() {
+  runBtn.disabled = true;
+  logEl.textContent = "";
+
+  if (!isConfigured()) {
+    say("ยังไม่ได้ใส่ค่า Firebase — เปิด app/firebase-config.js แล้ววาง firebaseConfig ก่อน");
+    runBtn.disabled = false;
+    return;
+  }
+
+  try {
+    for (const p of products) {
+      await setDoc(doc(db, "products", p.id), {
+        name: p.name, company: p.company, channel: p.channel,
+      });
+    }
+    say(`products — ใส่แล้ว ${products.length} รายการ`);
+
+    for (const u of users) {
+      await setDoc(doc(db, "users", u.id), {
+        name: u.name, role: u.role, channel: u.channel, area: u.area,
+      });
+    }
+    say(`users — ใส่แล้ว ${users.length} รายการ`);
+
+    const byId = Object.fromEntries([...users, ...products].map(x => [x.id, x]));
+    for (const r of requests) {
+      const buyer = byId[r.buyer];
+      const product = byId[r.product];
+      await setDoc(doc(db, "requests", r.id), {
+        buyerId: r.buyer,
+        buyerName: buyer.name,          // จดชื่อซ้ำ
+        buyerChannel: buyer.channel,    // OTC / MC — เส้นแดงข้อ 4 กรองที่ชั้นข้อมูล
+        buyerArea: buyer.area,
+        productId: r.product,
+        productName: product.name,      // จดชื่อซ้ำ
+        qty: r.qty,
+        unit: r.unit,
+        note: r.note,
+        status: r.status,
+        createdAt: serverTimestamp(),
+      });
+    }
+    say(`requests — ใส่แล้ว ${requests.length} รายการ`);
+
+    // โฟลเดอร์ย่อย — คำตอบของผู้แทน ผูกกับคำขอใบนั้นโดยเฉพาะ
+    // ข้อมูลติดต่ออยู่ในนี้ เพราะเปิดเผยได้ต่อเมื่อผู้แทนกดรับคำขอแล้ว
+    await setDoc(doc(db, "requests", "r002", "replies", "rep02"), {
+      repId: "u_rep02",
+      repName: "คุณมาลี (ผู้แทนอิสระ)",
+      message: "มีของครับ ส่งได้ศุกร์นี้ ขอคุยเรื่องจำนวนกับราคายกลังทางโทรศัพท์",
+      contactPhone: "08x-xxx-xxxx",
+      createdAt: serverTimestamp(),
+    });
+    say("requests/r002/replies — ใส่แล้ว 1 รายการ");
+
+    say("\nเสร็จแล้ว เปิด Firebase Console ดูได้เลย แล้วกลับไปที่ index.html");
+  } catch (e) {
+    say("ผิดพลาด: " + e.message);
+  }
+  runBtn.disabled = false;
+}
+
+runBtn.onclick = seed;
+</script>
+</body>
+</html>
