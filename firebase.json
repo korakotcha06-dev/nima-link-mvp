@@ -10,6 +10,9 @@
       ".firebaserc",
       "firestore.rules",
       "**/.*",
+      ".git/**",
+      "**/.git/**",
+      ".firebase/**",
       "**/node_modules/**",
       "*.md",
       "docs/**"
