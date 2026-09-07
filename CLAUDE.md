@@ -53,6 +53,11 @@ Firestore + Firebase Auth (Email/Password) + Firebase Hosting
 - **`where` + `orderBy` คนละช่องต้องสร้าง composite index** — โค้ดจึงกรองด้วย `where` ตัวเดียวแล้วเรียงฝั่งหน้าเว็บ
 - **เปิดไฟล์ตรง ๆ ด้วย `file://` ไม่ได้** — หน้าเว็บใช้ ES module ต้องรันผ่าน `python3 -m http.server 8000`
 - **ห้ามเปิด `cleanUrls` ใน `firebase.json`** — `detail.html?id=...` จะโดนตัด query ตอน redirect
+- 🔴 **`onAuthStateChanged` ยิงทันทีที่สมัครสำเร็จ** — ถ้า listener สั่งเปลี่ยนหน้า มันจะตัดหน้าไปก่อนที่ `setDoc` เขียนโปรไฟล์จะเสร็จ ได้บัญชี Auth ที่ไม่มีเอกสาร `users/{uid}` ต้องมีตัวแปร `busy` กันไว้ระหว่างบันทึก
+- 🔴 **Firebase Hosting ตั้ง `max-age=3600` ให้ทุกไฟล์เป็นค่าเริ่มต้น** — deploy แล้วคนที่เคยเข้าจะได้ HTML ใหม่ปน JS เก่านานถึง 1 ชม. โปรเจกต์นี้ไม่มี build จึงไม่มีลายเซ็นในชื่อไฟล์ ต้องตั้ง `Cache-Control: no-cache` ให้ html/js/css ใน `firebase.json`
+- 🔴 **attribute `hidden` แพ้กฎ `display`** — `.tabs { display:flex }` ทำให้สั่งซ่อนแล้วยังโผล่ ต้องมี `[hidden] { display:none !important }`
+- **`.card a` ไม่ครอบกรณีที่ตัวการ์ดเองเป็นลิงก์** — ต้องเขียน `.card a, a.card` ไม่งั้นการ์ดทั้งใบขีดเส้นใต้
+- **ไม่มีบัญชีผู้แทนสำหรับทดสอบ** ให้สลับ `role` ของบัญชีตัวเองใน Firestore เป็น `rep` แล้วรีเฟรช ปุ่มต้องเปลี่ยนตาม เสร็จแล้วสลับกลับ
 
 ## Deploy
 

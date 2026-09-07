@@ -11,10 +11,31 @@ export const auth = getAuth(app);
 export const ROLE = { BUYER: "buyer", REP: "rep" };
 export const ROLE_LABEL = { buyer: "ร้านยา / คลินิก", rep: "ผู้แทนยา" };
 
+/**
+ * เขียนโปรไฟล์ลง users/{uid}
+ * แยกออกมาเป็นฟังก์ชันของตัวเอง เพราะต้องใช้ทั้งตอนสมัครใหม่
+ * และตอนซ่อมบัญชีที่มี Auth แล้วแต่โปรไฟล์หาย
+ */
+export async function saveProfile(uid, { email, name, role, channel, area }) {
+  // Firestore ต้องรอให้ token ของคนที่เพิ่งล็อกอินส่งถึงก่อน ไม่งั้นโดน permission-denied
+  // เคยพลาดมาแล้วตอนสมัครครั้งแรก: บัญชี Auth เกิดแต่โปรไฟล์ไม่เกิด
+  await auth.currentUser?.getIdToken(true);
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await setDoc(doc(db, "users", uid), { email, name, role, channel, area });
+      return;
+    } catch (e) {
+      if (e.code !== "permission-denied" || attempt === 3) throw e;
+      await new Promise(r => setTimeout(r, 400 * attempt));
+      await auth.currentUser?.getIdToken(true);
+    }
+  }
+}
+
 /** สมัครสมาชิก แล้วสร้าง users/{uid} เก็บบทบาทและช่องทาง */
 export async function register({ email, password, name, role, channel, area }) {
   const cred = await createUserWithEmailAndPassword(auth, email, password);
-  await setDoc(doc(db, "users", cred.user.uid), { email, name, role, channel, area });
+  await saveProfile(cred.user.uid, { email, name, role, channel, area });
   return cred.user;
 }
 
@@ -40,8 +61,8 @@ export function requireAuth() {
       }
       const profile = await loadProfile(user.uid);
       if (!profile) {
-        // มีบัญชีแต่ไม่มีโปรไฟล์ (สมัครค้างกลางทาง) — ให้กลับไปกรอกใหม่
-        location.replace("login.html?missing=1");
+        // มีบัญชีแต่ไม่มีโปรไฟล์ (สมัครค้างกลางทาง) — พาไปกรอกโปรไฟล์ให้จบ ไม่ใช่ทางตัน
+        location.replace("login.html?completeProfile=1&next=" + encodeURIComponent(location.pathname + location.search));
         return;
       }
       resolve(profile);

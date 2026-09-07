@@ -11,17 +11,21 @@
   <h1>NIMA Link</h1>
   <p class="sub">เชื่อมร้านยา / คลินิก / โรงพยาบาล กับผู้แทนยา</p>
 
-  <div class="tabs">
+  <div class="tabs" id="tabs">
     <button id="tabLogin" aria-pressed="true">เข้าสู่ระบบ</button>
     <button id="tabRegister" aria-pressed="false">สมัครใช้งาน</button>
   </div>
 
   <form id="form" class="card" autocomplete="on">
-    <label for="email">อีเมล</label>
-    <input id="email" type="email" required autocomplete="email">
+    <p class="msg" id="banner" hidden></p>
 
-    <label for="password">รหัสผ่าน</label>
-    <input id="password" type="password" required autocomplete="current-password" minlength="6">
+    <div id="credFields">
+      <label for="email">อีเมล</label>
+      <input id="email" type="email" required autocomplete="email">
+
+      <label for="password">รหัสผ่าน</label>
+      <input id="password" type="password" required autocomplete="current-password" minlength="6">
+    </div>
 
     <div id="regFields" hidden>
       <label for="name">ชื่อร้าน / คลินิก / ชื่อผู้แทน</label>
@@ -50,6 +54,7 @@
 
     <div class="actions">
       <button id="submit" class="primary" type="submit">เข้าสู่ระบบ</button>
+      <button id="signoutBtn" class="ghost" type="button" hidden>ออกจากระบบ</button>
     </div>
     <p class="msg" id="msg"></p>
   </form>
@@ -61,63 +66,98 @@
 </div>
 
 <script type="module">
-import { register, login, friendlyAuthError, auth } from "./app/auth.js";
+import { register, login, logout, saveProfile, loadProfile, friendlyAuthError, auth } from "./app/auth.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
 
 const $ = id => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const next = params.get("next") || "index.html";
+
+// 3 โหมด: login · register · complete (มีบัญชีแล้วแต่โปรไฟล์หาย)
 let mode = "login";
 
-if (params.get("missing")) {
-  $("msg").className = "msg err";
-  $("msg").textContent = "บัญชีนี้ยังไม่มีโปรไฟล์ในระบบ — สมัครใช้งานใหม่อีกครั้ง";
-}
-
-// ล็อกอินอยู่แล้วไม่ต้องเห็นหน้านี้
-onAuthStateChanged(auth, u => { if (u) location.replace(next); });
+// 🔴 กันบั๊กที่เคยทำโปรไฟล์หาย:
+// createUserWithEmailAndPassword ทำให้ถือว่าล็อกอินทันที onAuthStateChanged จึงยิง
+// แล้วพาออกจากหน้าไปก่อนที่ setDoc จะเขียน users/{uid} เสร็จ
+// ระหว่างกำลังบันทึกจึงต้องห้าม listener แตะการนำทาง
+let busy = false;
 
 function setMode(m) {
   mode = m;
-  const reg = m === "register";
-  $("tabLogin").setAttribute("aria-pressed", String(!reg));
-  $("tabRegister").setAttribute("aria-pressed", String(reg));
-  $("regFields").hidden = !reg;
-  $("name").required = reg;
-  $("area").required = reg;
-  $("password").setAttribute("autocomplete", reg ? "new-password" : "current-password");
-  $("submit").textContent = reg ? "สมัครใช้งาน" : "เข้าสู่ระบบ";
+  const showCreds = m !== "complete";
+  const showReg   = m !== "login";
+
+  $("tabs").hidden = m === "complete";
+  $("credFields").hidden = !showCreds;
+  $("email").required = showCreds;
+  $("password").required = showCreds;
+  $("regFields").hidden = !showReg;
+  $("name").required = showReg;
+  $("area").required = showReg;
+  $("password").setAttribute("autocomplete", m === "register" ? "new-password" : "current-password");
+  $("signoutBtn").hidden = m !== "complete";
+
+  $("tabLogin").setAttribute("aria-pressed", String(m === "login"));
+  $("tabRegister").setAttribute("aria-pressed", String(m === "register"));
+  $("submit").textContent =
+    m === "register" ? "สมัครใช้งาน" : m === "complete" ? "บันทึกโปรไฟล์" : "เข้าสู่ระบบ";
   $("msg").textContent = "";
 }
+
+function banner(text, cls = "err") {
+  $("banner").className = "msg " + cls;
+  $("banner").textContent = text;
+  $("banner").hidden = false;
+}
+
 $("tabLogin").onclick    = () => setMode("login");
 $("tabRegister").onclick = () => setMode("register");
+$("signoutBtn").onclick  = async () => { await logout(); location.replace("login.html"); };
 
-// ช่องทางผูกกับบทบาท: ผู้แทนเลือกเองได้ ร้าน/คลินิกก็เลือกเองได้ แต่เลือกแล้วล็อก
+// ล็อกอินอยู่แล้ว: มีโปรไฟล์ก็ไปต่อ · ไม่มีโปรไฟล์ให้กรอกให้จบตรงนี้ ไม่ปล่อยเป็นทางตัน
+onAuthStateChanged(auth, async (u) => {
+  if (!u || busy) return;
+  const profile = await loadProfile(u.uid);
+  if (profile) { location.replace(next); return; }
+  setMode("complete");
+  banner("บัญชีนี้สมัครไว้แล้วแต่ยังไม่มีโปรไฟล์ในระบบ — กรอกให้ครบแล้วกดบันทึกเพื่อใช้งานต่อ");
+});
+
 $("form").addEventListener("submit", async (e) => {
   e.preventDefault();
+  busy = true;
   $("submit").disabled = true;
   $("msg").className = "msg";
   $("msg").textContent = "กำลังดำเนินการ...";
+  const profile = {
+    name: $("name").value.trim(),
+    role: $("role").value,
+    channel: $("channel").value,
+    area: $("area").value.trim(),
+  };
   try {
-    if (mode === "register") {
-      await register({
-        email: $("email").value.trim(),
-        password: $("password").value,
-        name: $("name").value.trim(),
-        role: $("role").value,
-        channel: $("channel").value,
-        area: $("area").value.trim(),
-      });
+    if (mode === "complete") {
+      await saveProfile(auth.currentUser.uid, { email: auth.currentUser.email, ...profile });
+      location.replace(next);
+    } else if (mode === "register") {
+      await register({ email: $("email").value.trim(), password: $("password").value, ...profile });
+      location.replace(next);
     } else {
       await login($("email").value.trim(), $("password").value);
+      busy = false;                    // ปลดให้ listener ข้างบนพาไปต่อ
+      const p = await loadProfile(auth.currentUser.uid);
+      if (p) location.replace(next);
+      else { setMode("complete"); banner("บัญชีนี้ยังไม่มีโปรไฟล์ในระบบ — กรอกให้ครบแล้วกดบันทึก"); }
     }
-    location.replace(next);
   } catch (err) {
+    busy = false;
     $("msg").className = "msg err";
     $("msg").textContent = friendlyAuthError(err.code || err.message);
     $("submit").disabled = false;
   }
 });
+
+setMode("login");
 </script>
 </body>
 </html>

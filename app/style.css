@@ -30,6 +30,10 @@
   }
 }
 * { box-sizing: border-box; }
+/* attribute hidden ต้องชนะกฎ display ทุกตัว
+   ไม่งั้น .tabs ที่เป็น display:flex จะยังโผล่ทั้งที่สั่งซ่อนแล้ว */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   padding: 24px 16px 64px;
@@ -98,7 +102,8 @@ button.ghost { background: transparent; }
 .msg.err { color: var(--rejected); }
 .msg.ok  { color: var(--accepted); }
 .tabs { display: flex; gap: 6px; margin-bottom: 4px; }
-.card a { text-decoration: none; }
+/* ครอบทั้งกรณีลิงก์อยู่ในการ์ด และกรณีที่ตัวการ์ดเองเป็นลิงก์ */
+.card a, a.card { text-decoration: none; color: inherit; }
 .card.link:hover { border-color: var(--accent); }
 .kv { display: grid; grid-template-columns: 150px 1fr; gap: 6px 14px; font-size: 14px; margin: 14px 0; }
 .kv dt { color: var(--muted); }
