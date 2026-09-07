@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NIMA Link — สร้างคำขอใหม่</title>
+<link rel="stylesheet" href="app/style.css">
+</head>
+<body>
+<div class="wrap" style="max-width:560px">
+  <div class="top">
+    <div>
+      <h1>สร้างคำขอหายา</h1>
+      <p class="sub" id="sub">กำลังโหลด...</p>
+    </div>
+    <div class="who">
+      <strong id="whoName">—</strong>
+      <span id="whoRole"></span>
+    </div>
+  </div>
+
+  <form id="form" class="card" hidden>
+    <label for="product">รายการยาที่ต้องการ</label>
+    <select id="product" required></select>
+
+    <div class="two">
+      <div>
+        <label for="qty">จำนวน</label>
+        <input id="qty" type="number" min="1" step="1" value="10" required>
+      </div>
+      <div>
+        <label for="unit">หน่วย</label>
+        <select id="unit">
+          <option>แผง</option><option>กล่อง</option><option>ขวด</option>
+          <option>ซอง</option><option>ลัง</option><option>ชิ้น</option>
+        </select>
+      </div>
+    </div>
+
+    <label for="note">รายละเอียดเพิ่มเติม</label>
+    <textarea id="note" placeholder="เช่น ของหมดตั้งแต่เมื่อวาน ถ้าได้ภายในพรุ่งนี้เช้าจะดีมาก รับได้ทีละ 20 แผงก่อน"></textarea>
+
+    <div class="actions">
+      <button id="submit" class="primary" type="submit">ส่งคำขอ</button>
+      <button type="button" class="ghost" onclick="location.href='index.html'">ยกเลิก</button>
+    </div>
+    <p class="msg" id="msg"></p>
+  </form>
+
+  <p class="hint" id="denied" hidden>
+    หน้านี้สำหรับร้านยา / คลินิก เท่านั้น — ผู้แทนยาเป็นฝ่ายรับคำขอ ไม่ใช่ฝ่ายสร้าง
+    <br><a href="index.html">กลับไปหน้ารายการ</a>
+  </p>
+</div>
+
+<script type="module">
+import { collection, getDocs, query, where, addDoc, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
+import { db, STATUS } from "./app/db.js";
+import { requireAuth, ROLE, ROLE_LABEL } from "./app/auth.js";
+
+const $ = id => document.getElementById(id);
+const me = await requireAuth();
+$("whoName").textContent = me.name;
+$("whoRole").textContent = `${ROLE_LABEL[me.role]} · ${me.channel}`;
+
+// ACL — ผู้แทนสร้างคำขอไม่ได้ ปุ่มและหน้าต้องปิดตามตารางสิทธิ์
+if (me.role !== ROLE.BUYER) {
+  $("sub").textContent = "ไม่มีสิทธิ์เข้าหน้านี้";
+  $("denied").hidden = false;
+} else {
+  $("sub").textContent = `คำขอจะถูกส่งไปหาผู้แทนช่องทาง ${me.channel} ในเขตใกล้เคียง`;
+  await loadProducts();
+  $("form").hidden = false;
+}
+
+// OTC/MC เป็น hard gate — เห็นเฉพาะรายการยาในช่องทางเดียวกับโปรไฟล์
+async function loadProducts() {
+  const snap = await getDocs(query(collection(db, "products"), where("channel", "==", me.channel)));
+  const opts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  $("product").innerHTML = opts.length
+    ? opts.map(p => `<option value="${p.id}" data-name="${p.name.replace(/"/g,"&quot;")}">${p.name}</option>`).join("")
+    : `<option value="">— ยังไม่มีรายการยาในช่องทาง ${me.channel} —</option>`;
+  if (!opts.length) $("submit").disabled = true;
+}
+
+$("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("submit").disabled = true;
+  $("msg").className = "msg";
+  $("msg").textContent = "กำลังบันทึก...";
+  try {
+    const opt = $("product").selectedOptions[0];
+    await addDoc(collection(db, "requests"), {
+      buyerId: me.uid,                 // uid ของคนที่ล็อกอินอยู่
+      buyerName: me.name,              // จดชื่อซ้ำ ไม่ต้อง JOIN ตอนอ่าน
+      buyerChannel: me.channel,
+      buyerArea: me.area || "",
+      productId: opt.value,
+      productName: opt.dataset.name,   // จดชื่อซ้ำ
+      qty: Number($("qty").value),
+      unit: $("unit").value,
+      note: $("note").value.trim(),
+      status: STATUS.PENDING,          // สถานะเริ่มต้น
+      createdAt: serverTimestamp(),
+    });
+    location.href = "index.html";
+  } catch (err) {
+    $("msg").className = "msg err";
+    $("msg").textContent = "บันทึกไม่สำเร็จ: " + (err.code || err.message);
+    $("submit").disabled = false;
+  }
+});
+</script>
+</body>
+</html>

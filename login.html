@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NIMA Link — เข้าสู่ระบบ</title>
+<link rel="stylesheet" href="app/style.css">
+</head>
+<body>
+<div class="wrap" style="max-width:440px">
+  <h1>NIMA Link</h1>
+  <p class="sub">เชื่อมร้านยา / คลินิก / โรงพยาบาล กับผู้แทนยา</p>
+
+  <div class="tabs">
+    <button id="tabLogin" aria-pressed="true">เข้าสู่ระบบ</button>
+    <button id="tabRegister" aria-pressed="false">สมัครใช้งาน</button>
+  </div>
+
+  <form id="form" class="card" autocomplete="on">
+    <label for="email">อีเมล</label>
+    <input id="email" type="email" required autocomplete="email">
+
+    <label for="password">รหัสผ่าน</label>
+    <input id="password" type="password" required autocomplete="current-password" minlength="6">
+
+    <div id="regFields" hidden>
+      <label for="name">ชื่อร้าน / คลินิก / ชื่อผู้แทน</label>
+      <input id="name" type="text" autocomplete="organization">
+
+      <div class="two">
+        <div>
+          <label for="role">คุณคือ</label>
+          <select id="role">
+            <option value="buyer">ร้านยา / คลินิก</option>
+            <option value="rep">ผู้แทนยา</option>
+          </select>
+        </div>
+        <div>
+          <label for="channel">ช่องทาง</label>
+          <select id="channel">
+            <option value="OTC">OTC — ร้านขายยา</option>
+            <option value="MC">MC — คลินิก / โรงพยาบาล</option>
+          </select>
+        </div>
+      </div>
+
+      <label for="area">เขต / อำเภอ</label>
+      <input id="area" type="text" placeholder="เช่น ช้างเผือก">
+    </div>
+
+    <div class="actions">
+      <button id="submit" class="primary" type="submit">เข้าสู่ระบบ</button>
+    </div>
+    <p class="msg" id="msg"></p>
+  </form>
+
+  <p class="hint" style="margin-top:16px">
+    OTC กับ MC เป็นคนละสระว่ายน้ำ — ร้านขายยาเห็นได้เฉพาะของ OTC
+    คลินิกและโรงพยาบาลเห็นได้เฉพาะของ MC ล็อกไว้ที่โปรไฟล์ตั้งแต่สมัคร
+  </p>
+</div>
+
+<script type="module">
+import { register, login, friendlyAuthError, auth } from "./app/auth.js";
+import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
+
+const $ = id => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+const next = params.get("next") || "index.html";
+let mode = "login";
+
+if (params.get("missing")) {
+  $("msg").className = "msg err";
+  $("msg").textContent = "บัญชีนี้ยังไม่มีโปรไฟล์ในระบบ — สมัครใช้งานใหม่อีกครั้ง";
+}
+
+// ล็อกอินอยู่แล้วไม่ต้องเห็นหน้านี้
+onAuthStateChanged(auth, u => { if (u) location.replace(next); });
+
+function setMode(m) {
+  mode = m;
+  const reg = m === "register";
+  $("tabLogin").setAttribute("aria-pressed", String(!reg));
+  $("tabRegister").setAttribute("aria-pressed", String(reg));
+  $("regFields").hidden = !reg;
+  $("name").required = reg;
+  $("area").required = reg;
+  $("password").setAttribute("autocomplete", reg ? "new-password" : "current-password");
+  $("submit").textContent = reg ? "สมัครใช้งาน" : "เข้าสู่ระบบ";
+  $("msg").textContent = "";
+}
+$("tabLogin").onclick    = () => setMode("login");
+$("tabRegister").onclick = () => setMode("register");
+
+// ช่องทางผูกกับบทบาท: ผู้แทนเลือกเองได้ ร้าน/คลินิกก็เลือกเองได้ แต่เลือกแล้วล็อก
+$("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("submit").disabled = true;
+  $("msg").className = "msg";
+  $("msg").textContent = "กำลังดำเนินการ...";
+  try {
+    if (mode === "register") {
+      await register({
+        email: $("email").value.trim(),
+        password: $("password").value,
+        name: $("name").value.trim(),
+        role: $("role").value,
+        channel: $("channel").value,
+        area: $("area").value.trim(),
+      });
+    } else {
+      await login($("email").value.trim(), $("password").value);
+    }
+    location.replace(next);
+  } catch (err) {
+    $("msg").className = "msg err";
+    $("msg").textContent = friendlyAuthError(err.code || err.message);
+    $("submit").disabled = false;
+  }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NIMA Link — รายละเอียดคำขอ</title>
+<link rel="stylesheet" href="app/style.css">
+</head>
+<body>
+<div class="wrap" style="max-width:620px">
+  <div class="top">
+    <div>
+      <h1>รายละเอียดคำขอ</h1>
+      <p class="sub"><a href="index.html">&larr; กลับไปหน้ารายการ</a></p>
+    </div>
+    <div class="who">
+      <strong id="whoName">—</strong>
+      <span id="whoRole"></span>
+    </div>
+  </div>
+
+  <div id="body"><p class="hint">กำลังโหลด...</p></div>
+</div>
+
+<script type="module">
+import { doc, getDoc, updateDoc, deleteDoc }
+  from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
+import { db, STATUS } from "./app/db.js";
+import { requireAuth, ROLE, ROLE_LABEL } from "./app/auth.js";
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+  ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+const badgeClass = { [STATUS.PENDING]:"pending", [STATUS.ACCEPTED]:"accepted", [STATUS.REJECTED]:"rejected" };
+
+const id = new URLSearchParams(location.search).get("id");
+const me = await requireAuth();
+$("whoName").textContent = me.name;
+$("whoRole").textContent = `${ROLE_LABEL[me.role]} · ${me.channel}`;
+
+const isBuyer = me.role === ROLE.BUYER;
+const ref = doc(db, "requests", id);
+
+function deny(reason) {
+  $("body").innerHTML = `<p class="hint">${esc(reason)}<br><a href="index.html">กลับไปหน้ารายการ</a></p>`;
+}
+
+async function load() {
+  if (!id) return deny("ไม่ได้ระบุว่าเป็นคำขอใบไหน");
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return deny("ไม่พบคำขอใบนี้ อาจถูกลบไปแล้ว");
+  const r = snap.data();
+
+  // ACL — ร้านดูของร้านอื่นไม่ได้ · ผู้แทนดูข้ามช่องทางไม่ได้ (OTC/MC hard gate)
+  if (isBuyer && r.buyerId !== me.uid) return deny("คำขอใบนี้เป็นของร้านอื่น คุณไม่มีสิทธิ์ดู");
+  if (!isBuyer && r.buyerChannel !== me.channel) return deny(`คำขอใบนี้อยู่ช่องทาง ${r.buyerChannel} คนละช่องทางกับคุณ`);
+
+  // เส้นแดงข้อ 6 — ผู้แทนเห็นชื่อร้านต่อเมื่อกดรับคำขอแล้ว
+  const revealed = isBuyer || r.status === STATUS.ACCEPTED;
+  const buyerLine = revealed
+    ? esc(r.buyerName)
+    : `<span class="masked">ร้านในเขต ${esc(r.buyerArea || "-")} (ยังไม่เปิดเผยชื่อ)</span>`;
+
+  const canChangeStatus = !isBuyer && r.status === STATUS.PENDING;  // ผู้แทนเท่านั้น และเปลี่ยนได้ครั้งเดียว
+  const canDelete = isBuyer && r.buyerId === me.uid;                // ร้านเจ้าของเท่านั้น
+
+  $("body").innerHTML = `
+    <div class="card">
+      <div class="row">
+        <span class="name">${buyerLine}</span>
+        <span class="badge ${badgeClass[r.status] || "pending"}">${esc(r.status)}</span>
+      </div>
+      <dl class="kv">
+        <dt>รายการยา</dt><dd>${esc(r.productName)}</dd>
+        <dt>จำนวน</dt><dd>${esc(r.qty)} ${esc(r.unit || "หน่วย")}</dd>
+        <dt>ช่องทาง</dt><dd>${esc(r.buyerChannel)}</dd>
+        <dt>เขต</dt><dd>${esc(r.buyerArea || "-")}</dd>
+        <dt>รายละเอียด</dt><dd>${esc(r.note) || "-"}</dd>
+        <dt>ส่งเมื่อ</dt><dd>${r.createdAt?.toDate ? r.createdAt.toDate().toLocaleString("th-TH") : "-"}</dd>
+      </dl>
+
+      ${canChangeStatus ? `
+        <div class="actions">
+          <button id="accept" class="primary">รับคำขอ</button>
+          <button id="reject" class="ghost">ปฏิเสธ</button>
+        </div>
+        <p class="meta" style="margin-top:8px">กดรับแล้วชื่อและที่อยู่ร้านจะเปิดเผยให้คุณเห็น</p>` : ""}
+
+      ${!isBuyer && !canChangeStatus ? `<p class="meta">คำขอใบนี้ตอบไปแล้ว เปลี่ยนสถานะซ้ำไม่ได้</p>` : ""}
+      ${isBuyer ? `<p class="meta">สถานะเปลี่ยนโดยผู้แทนเท่านั้น — คุณอนุมัติคำขอของตัวเองไม่ได้</p>` : ""}
+
+      ${canDelete ? `
+        <div class="actions">
+          <button id="askDelete" class="danger">ลบคำขอนี้</button>
+        </div>
+        <div id="confirmBox" class="hint" hidden style="margin-top:12px">
+          ลบแล้วกู้คืนไม่ได้ ยืนยันจะลบคำขอนี้หรือไม่
+          <div class="actions">
+            <button id="doDelete" class="danger">ยืนยันลบ</button>
+            <button id="cancelDelete" class="ghost">ยกเลิก</button>
+          </div>
+        </div>` : ""}
+
+      <p class="msg" id="msg"></p>
+    </div>`;
+
+  if (canChangeStatus) {
+    $("accept").onclick = () => setStatus(STATUS.ACCEPTED);
+    $("reject").onclick = () => setStatus(STATUS.REJECTED);
+  }
+  if (canDelete) {
+    // ถามยืนยันก่อนลบทุกครั้ง — ใช้กล่องในหน้า ไม่ใช่ confirm() ของเบราว์เซอร์
+    $("askDelete").onclick    = () => { $("confirmBox").hidden = false; $("askDelete").disabled = true; };
+    $("cancelDelete").onclick = () => { $("confirmBox").hidden = true;  $("askDelete").disabled = false; };
+    $("doDelete").onclick     = remove;
+  }
+}
+
+// แก้เฉพาะช่อง status ช่องอื่นไม่แตะ
+async function setStatus(next) {
+  try {
+    $("msg").className = "msg";
+    $("msg").textContent = "กำลังบันทึก...";
+    await updateDoc(ref, { status: next });
+    await load();
+  } catch (e) {
+    $("msg").className = "msg err";
+    $("msg").textContent = "เปลี่ยนสถานะไม่สำเร็จ: " + (e.code || e.message);
+  }
+}
+
+async function remove() {
+  try {
+    $("doDelete").disabled = true;
+    await deleteDoc(ref);
+    location.href = "index.html";
+  } catch (e) {
+    $("msg").className = "msg err";
+    $("msg").textContent = "ลบไม่สำเร็จ: " + (e.code || e.message);
+    $("doDelete").disabled = false;
+  }
+}
+
+load();
+</script>
+</body>
+</html>

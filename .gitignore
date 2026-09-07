@@ -1,3 +1,17 @@
 .DS_Store
 ._*
 node_modules/
+
+# ── Firebase ──
+.firebase/
+firebase-debug.log
+*-debug.log
+
+# ── ไฟล์คีย์ ห้ามขึ้น repo เด็ดขาด ──
+# apiKey ฝั่งเว็บใน app/firebase-config.js ไม่ใช่คีย์ลับ commit ได้
+# ที่ห้ามคือ service account key ซึ่งเปิดสิทธิ์ฝั่งเซิร์ฟเวอร์ทั้งหมด
+*serviceAccount*.json
+*service-account*.json
+*-firebase-adminsdk-*.json
+.env
+.env.*

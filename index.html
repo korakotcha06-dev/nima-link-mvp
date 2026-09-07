@@ -8,13 +8,22 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>รายการคำขอหายา</h1>
-  <p class="sub">NIMA Link · อ่านสดจาก Firestore — แก้ข้อมูลใน Firebase Console แล้วกด F5 หน้านี้จะเปลี่ยนตาม</p>
+  <div class="top">
+    <div>
+      <h1>รายการคำขอหายา</h1>
+      <p class="sub" id="sub">กำลังโหลด...</p>
+    </div>
+    <div class="who">
+      <strong id="whoName">—</strong>
+      <span id="whoRole"></span>
+      <div class="actions" style="margin-top:8px">
+        <button id="signout" class="ghost">ออกจากระบบ</button>
+      </div>
+    </div>
+  </div>
 
-  <div class="bar">
-    <span class="meta">ดูในมุมของ</span>
-    <button id="asBuyer" aria-pressed="true">ร้านยา / คลินิก</button>
-    <button id="asRep" aria-pressed="false">ผู้แทนยา</button>
+  <div class="bar" id="bar" hidden>
+    <button id="btnNew" class="primary">+ สร้างคำขอใหม่</button>
   </div>
 
   <div id="list"></div>
@@ -22,75 +31,72 @@
 </div>
 
 <script type="module">
-import { collection, getDocs, orderBy, query } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
-import { db, STATUS, isConfigured } from "./app/db.js";
+import { collection, getDocs, query, where } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
+import { db, STATUS } from "./app/db.js";
+import { requireAuth, mountSignOut, ROLE, ROLE_LABEL } from "./app/auth.js";
 
-const listEl = document.getElementById("list");
-const logEl  = document.getElementById("log");
-const btnBuyer = document.getElementById("asBuyer");
-const btnRep   = document.getElementById("asRep");
+const $ = id => document.getElementById(id);
+const badgeClass = { [STATUS.PENDING]:"pending", [STATUS.ACCEPTED]:"accepted", [STATUS.REJECTED]:"rejected" };
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+  ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 
-let viewAs = "buyer";
-let rows = [];
+const me = await requireAuth();
+mountSignOut($("signout"));
+$("whoName").textContent = me.name;
+$("whoRole").textContent = `${ROLE_LABEL[me.role]} · ${me.channel}`;
 
-const badgeClass = {
-  [STATUS.PENDING]:  "pending",
-  [STATUS.ACCEPTED]: "accepted",
-  [STATUS.REJECTED]: "rejected",
-};
+// ปุ่มบนหน้าจอเปลี่ยนตามบทบาทจริงที่อ่านจาก users/{uid} — ตรงตาม ACL.md
+const isBuyer = me.role === ROLE.BUYER;
+$("bar").hidden = !isBuyer;
+$("btnNew").onclick = () => location.href = "new.html";
 
-function esc(s) {
-  return String(s ?? "").replace(/[&<>"']/g, c =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
+$("sub").textContent = isBuyer
+  ? "คำขอที่ร้านของคุณส่งไป — ร้านอื่นมองไม่เห็น"
+  : `คำขอในช่องทาง ${me.channel} ที่รอผู้แทนรับ — ชื่อร้านจะเปิดเผยหลังกดรับคำขอ`;
 
-// เส้นแดงข้อ 6 ของโปรเจกต์ — ผู้แทนไม่เห็นว่าเป็นร้านไหน จนกว่าจะกดรับคำขอ
-// สัปดาห์นี้ยังบังคับที่ชั้นการแสดงผลก่อน ของจริงต้องเป็น security rules ในสัปดาห์ที่ 8
+// เส้นแดงข้อ 6 — ผู้แทนยังไม่เห็นว่าเป็นร้านไหน จนกว่าจะกดรับคำขอ
 function buyerLabel(r) {
-  if (viewAs === "rep" && r.status !== STATUS.ACCEPTED) {
+  if (!isBuyer && r.status !== STATUS.ACCEPTED) {
     return `<span class="masked">ร้านในเขต ${esc(r.buyerArea || "-")} (ยังไม่เปิดเผยชื่อ)</span>`;
   }
   return esc(r.buyerName);
 }
 
-function render() {
+function render(rows) {
   if (!rows.length) {
-    listEl.innerHTML = `<p class="hint">ยังไม่มีคำขอในฐานข้อมูล — เปิด <code>seed.html</code> เพื่อใส่ข้อมูลตัวอย่างก่อน</p>`;
+    $("list").innerHTML = isBuyer
+      ? `<p class="hint">ยังไม่มีคำขอของร้านคุณ — กด "สร้างคำขอใหม่" เพื่อเริ่ม</p>`
+      : `<p class="hint">ยังไม่มีคำขอในช่องทาง ${esc(me.channel)}</p>`;
     return;
   }
-  listEl.innerHTML = rows.map(r => `
-    <article class="card">
+  $("list").innerHTML = rows.map(r => `
+    <a class="card link" href="detail.html?id=${encodeURIComponent(r.id)}" style="display:block;color:inherit">
       <div class="row">
         <span class="name">${buyerLabel(r)}</span>
         <span class="badge ${badgeClass[r.status] || "pending"}">${esc(r.status)}</span>
       </div>
       <div class="meta">${esc(r.productName)} · ${esc(r.qty)} ${esc(r.unit || "หน่วย")} · ช่องทาง ${esc(r.buyerChannel)}</div>
       ${r.note ? `<p class="note">${esc(r.note)}</p>` : ""}
-    </article>`).join("");
+    </a>`).join("");
 }
-
-function setView(v) {
-  viewAs = v;
-  btnBuyer.setAttribute("aria-pressed", String(v === "buyer"));
-  btnRep.setAttribute("aria-pressed", String(v === "rep"));
-  render();
-}
-btnBuyer.onclick = () => setView("buyer");
-btnRep.onclick   = () => setView("rep");
 
 async function load() {
-  if (!isConfigured()) {
-    listEl.innerHTML = `<p class="hint">ยังไม่ได้ใส่ค่า Firebase — เปิด <code>app/firebase-config.js</code> แล้ววาง <code>firebaseConfig</code> ที่คัดลอกมาจาก Firebase Console</p>`;
-    return;
-  }
   try {
-    const snap = await getDocs(query(collection(db, "requests"), orderBy("createdAt", "desc")));
-    // Document ID ไม่ใช่ field — ต้องประกอบ id กลับเข้ามาเองตอนอ่าน
-    rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    logEl.textContent = `อ่านมาได้ ${rows.length} รายการ · ${new Date().toLocaleString("th-TH")}`;
-    render();
+    // กรองด้วย where ตัวเดียวแล้วเรียงฝั่งหน้าเว็บ
+    // where + orderBy คนละช่องต้องสร้าง composite index — ที่ขนาดข้อมูลเท่านี้ยังไม่คุ้ม
+    const q = isBuyer
+      ? query(collection(db, "requests"), where("buyerId", "==", me.uid))
+      : query(collection(db, "requests"), where("buyerChannel", "==", me.channel));
+
+    const snap = await getDocs(q);
+    const rows = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))   // Document ID ไม่ใช่ field ต้องประกอบกลับเอง
+      .sort((a, b) => (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0));
+
+    $("log").textContent = `อ่านมาได้ ${rows.length} รายการ · ${new Date().toLocaleString("th-TH")}`;
+    render(rows);
   } catch (e) {
-    listEl.innerHTML = `<p class="hint">อ่านข้อมูลไม่ได้: ${esc(e.message)}</p>`;
+    $("list").innerHTML = `<p class="hint">อ่านข้อมูลไม่ได้: ${esc(e.code || e.message)}</p>`;
   }
 }
 load();

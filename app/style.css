@@ -75,3 +75,32 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .hint code { background: var(--bg); padding: 1px 5px; border-radius: 4px; }
 .log { font-size: 13px; color: var(--muted); white-space: pre-wrap; margin-top: 12px; }
 a { color: var(--accent); }
+
+/* ── ฟอร์ม · หัวหน้าเพจ · ปุ่มลบ (เพิ่มสัปดาห์ที่ 7) ── */
+.top {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 12px; margin-bottom: 18px; flex-wrap: wrap;
+}
+.who { font-size: 13px; color: var(--muted); text-align: right; }
+.who strong { color: var(--text); display: block; }
+label { display: block; font-size: 14px; margin: 14px 0 5px; }
+input, select, textarea {
+  font: inherit; width: 100%; padding: 9px 11px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text);
+}
+textarea { min-height: 90px; resize: vertical; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 520px) { .two { grid-template-columns: 1fr; } }
+.actions { display: flex; gap: 8px; margin-top: 20px; flex-wrap: wrap; }
+button.danger { color: var(--rejected); border-color: var(--rejected); background: transparent; }
+button.ghost { background: transparent; }
+.msg { margin-top: 14px; font-size: 14px; }
+.msg.err { color: var(--rejected); }
+.msg.ok  { color: var(--accepted); }
+.tabs { display: flex; gap: 6px; margin-bottom: 4px; }
+.card a { text-decoration: none; }
+.card.link:hover { border-color: var(--accent); }
+.kv { display: grid; grid-template-columns: 150px 1fr; gap: 6px 14px; font-size: 14px; margin: 14px 0; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; }
+@media (max-width: 520px) { .kv { grid-template-columns: 1fr; } .kv dd { margin-bottom: 8px; } }
