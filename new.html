@@ -37,8 +37,17 @@
       </div>
     </div>
 
+    <label for="urgency">ความเร่งด่วน</label>
+    <select id="urgency"></select>
+
     <label for="note">รายละเอียดเพิ่มเติม</label>
     <textarea id="note" placeholder="เช่น ของหมดตั้งแต่เมื่อวาน ถ้าได้ภายในพรุ่งนี้เช้าจะดีมาก รับได้ทีละ 20 แผงก่อน"></textarea>
+
+    <!-- ผู้ช่วย AI ระดับ 1 — อ่านรายละเอียดแล้วเสนอรายการยากับความเร่งด่วน คนเป็นคนกดส่งเอง -->
+    <div class="actions" style="margin-top:10px">
+      <button type="button" id="aiPick" class="ghost">ให้ AI ช่วยเลือกรายการยาจากรายละเอียด</button>
+    </div>
+    <div id="aiBox" class="ai-box" hidden></div>
 
     <div class="actions">
       <button id="submit" class="primary" type="submit">ส่งคำขอ</button>
@@ -56,10 +65,13 @@
 <script type="module">
 import { collection, getDocs, query, where, addDoc, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
-import { db, STATUS } from "./app/db.js";
+import { db, STATUS, URGENCY } from "./app/db.js";
 import { requireAuth, ROLE, ROLE_LABEL } from "./app/auth.js";
+import { askAI, hasAiKey, parseJson } from "./app/ai.js";
 
 const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+  ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 const me = await requireAuth();
 $("whoName").textContent = me.name;
 $("whoRole").textContent = `${ROLE_LABEL[me.role]} · ${me.channel}`;
@@ -71,7 +83,10 @@ if (me.role !== ROLE.BUYER) {
 } else {
   $("sub").textContent = `คำขอจะถูกส่งไปหาผู้แทนช่องทาง ${me.channel} ในเขตใกล้เคียง`;
   await loadProducts();
+  $("urgency").innerHTML = Object.values(URGENCY)
+    .map(u => `<option${u === URGENCY.NORMAL ? " selected" : ""}>${u}</option>`).join("");
   $("form").hidden = false;
+  await setupAi();
 }
 
 // OTC/MC เป็น hard gate — เห็นเฉพาะรายการยาในช่องทางเดียวกับโปรไฟล์
@@ -82,6 +97,79 @@ async function loadProducts() {
     ? opts.map(p => `<option value="${p.id}" data-name="${p.name.replace(/"/g,"&quot;")}">${p.name}</option>`).join("")
     : `<option value="">— ยังไม่มีรายการยาในช่องทาง ${me.channel} —</option>`;
   if (!opts.length) $("submit").disabled = true;
+}
+
+// ── ผู้ช่วย AI ระดับ 1 ─────────────────────────────────────────
+// ร้านพิมพ์เป็นภาษาคน เช่น "พารา 500 หมดเกลี้ยง ขอด่วนภายในวันนี้"
+// AI อ่านแล้วเสนอรายการยาที่ตรงที่สุด + ความเร่งด่วน · เป็นแค่ข้อเสนอ คนแก้ได้ก่อนกดส่ง
+
+async function setupAi() {
+  if (!(await hasAiKey())) {
+    $("aiPick").disabled = true;
+    $("aiPick").title = "ยังไม่ได้ใส่คีย์ AI";
+    showAi("ยังไม่ได้ใส่คีย์ผู้ช่วย AI — เลือกรายการยาเองได้ตามปกติ", "muted");
+    return;
+  }
+  $("aiPick").addEventListener("click", aiPick);
+}
+
+async function aiPick() {
+  const note = $("note").value.trim();
+  if (!note) return showAi("พิมพ์รายละเอียดก่อน เช่น ต้องการยาอะไร ด่วนแค่ไหน แล้วค่อยกดปุ่มนี้", "muted");
+
+  const options = [...$("product").options].filter(o => o.value);
+  if (!options.length) return showAi("ยังไม่มีรายการยาในช่องทางของคุณให้เลือก", "muted");
+
+  // ระหว่างรอ: บอกว่ากำลังทำงาน และกดซ้ำไม่ได้
+  const btn = $("aiPick");
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "กำลังให้ AI อ่านรายละเอียด...";
+  showAi("กำลังส่งรายละเอียดไปให้ AI อ่าน (รอได้ไม่เกิน 15 วินาที)...", "muted");
+
+  try {
+    const answer = await askAI(
+      "คุณเป็นผู้ช่วยของร้านขายยา อ่านข้อความที่ร้านพิมพ์ แล้วเลือกรายการยาที่ตรงที่สุด " +
+      "จากรายการที่ให้ไว้เท่านั้น พร้อมระดับความเร่งด่วน " +
+      "ตอบเป็น JSON อย่างเดียว รูปแบบ " +
+      `{"product":"ชื่อรายการยาตามรายการทุกตัวอักษร หรือ ไม่ทราบ",` +
+      `"urgency":"${Object.values(URGENCY).join(" หรือ ")}",` +
+      `"reason":"เหตุผลสั้น ๆ ไม่เกิน 1 ประโยค"}`,
+      "รายการยาที่มีในระบบ:\n- " + options.map(o => o.dataset.name).join("\n- ") +
+      "\n\nข้อความที่ร้านพิมพ์:\n" + note
+    );
+    const out = parseJson(answer);
+
+    // ผลต้องเป็นรายการยาที่มีอยู่จริงเท่านั้น ไม่ตรงก็ไม่แตะค่าเดิม
+    const opt = options.find(o => o.dataset.name === String(out?.product ?? "").trim());
+    if (!opt) {
+      return showAi("AI จับคู่กับรายการยาในระบบไม่ได้ — กรุณาเลือกเอง (ค่าเดิมไม่ถูกเปลี่ยน)", "muted");
+    }
+    $("product").value = opt.value;
+    const urgencyOk = Object.values(URGENCY).includes(out.urgency);
+    if (urgencyOk) $("urgency").value = out.urgency;
+
+    showAi(
+      `<strong>ข้อเสนอจาก AI — โปรดตรวจสอบก่อนยืนยัน</strong><br>` +
+      `รายการยา: ${esc(opt.dataset.name)}` +
+      (urgencyOk ? ` · ความเร่งด่วน: ${esc(out.urgency)}` : "") +
+      (out.reason ? `<br><span class="meta">${esc(out.reason)}</span>` : "") +
+      `<br><span class="meta">แก้ได้ทุกช่องก่อนกด "ส่งคำขอ" — AI ไม่ได้ส่งคำขอให้</span>`,
+      "ai"
+    );
+  } catch (err) {
+    // เรียกไม่สำเร็จ ระบบต้องไม่ค้าง ยังเลือกเองแล้วกดส่งได้
+    showAi(`เรียก AI ไม่สำเร็จ — ${esc(err.message)} · เลือกรายการยาเองแล้วกดส่งคำขอได้ตามปกติ`, "err");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
+function showAi(html, kind) {
+  $("aiBox").innerHTML = html;
+  $("aiBox").className = "ai-box " + kind;
+  $("aiBox").hidden = false;
 }
 
 $("form").addEventListener("submit", async (e) => {
@@ -101,6 +189,7 @@ $("form").addEventListener("submit", async (e) => {
       qty: Number($("qty").value),
       unit: $("unit").value,
       note: $("note").value.trim(),
+      urgency: $("urgency").value,
       status: STATUS.PENDING,          // สถานะเริ่มต้น
       createdAt: serverTimestamp(),
     });

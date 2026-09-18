@@ -20,13 +20,30 @@
   </div>
 
   <div id="body"><p class="hint">กำลังโหลด...</p></div>
+
+  <!-- ผู้ช่วย AI ระดับ 2 — ไปอ่านข้อมูลหลายที่เอง แล้วสรุปให้ผู้แทนอ่านก่อนตัดสินใจรับหรือปฏิเสธ -->
+  <div id="aiCard" class="card" hidden>
+    <div class="row"><span class="name">ผู้ช่วยสรุปคำขอให้ผู้แทน</span></div>
+    <p class="meta">
+      AI จะอ่าน 4 อย่างให้เอง — คำขอใบนี้ · ข้อมูลรายการยา · คำตอบที่ผู้แทนเขียนไว้แล้ว ·
+      คำขอรายการเดียวกันที่ยังรออยู่ในช่องทางนี้ — แล้วสรุปให้อ่าน
+      <strong>AI ไม่กดรับหรือปฏิเสธแทนคุณ</strong>
+    </p>
+    <div class="actions" style="margin-top:12px">
+      <button type="button" id="aiSummarize" class="ghost">ให้ AI สรุปคำขอนี้</button>
+    </div>
+    <div id="aiResult" class="ai-box" hidden></div>
+  </div>
 </div>
 
 <script type="module">
-import { doc, getDoc, updateDoc, deleteDoc }
-  from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
+import {
+  doc, getDoc, updateDoc, deleteDoc,
+  collection, getDocs, addDoc, query, where, serverTimestamp,
+} from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
 import { db, STATUS } from "./app/db.js";
 import { requireAuth, ROLE, ROLE_LABEL } from "./app/auth.js";
+import { askAI, hasAiKey, aiModel, parseJson } from "./app/ai.js";
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
@@ -73,6 +90,7 @@ async function load() {
       <dl class="kv">
         <dt>รายการยา</dt><dd>${esc(r.productName)}</dd>
         <dt>จำนวน</dt><dd>${esc(r.qty)} ${esc(r.unit || "หน่วย")}</dd>
+        <dt>ความเร่งด่วน</dt><dd>${esc(r.urgency || "-")}</dd>
         <dt>ช่องทาง</dt><dd>${esc(r.buyerChannel)}</dd>
         <dt>เขต</dt><dd>${esc(r.buyerArea || "-")}</dd>
         <dt>รายละเอียด</dt><dd>${esc(r.note) || "-"}</dd>
@@ -114,6 +132,131 @@ async function load() {
     $("cancelDelete").onclick = () => { $("confirmBox").hidden = true;  $("askDelete").disabled = false; };
     $("doDelete").onclick     = remove;
   }
+  await setupAi({ id: snap.id, ...r });
+}
+
+// ── ผู้ช่วย AI ระดับ 2 (agentic) ───────────────────────────────
+// ต่างจากระดับ 1 ที่ถามครั้งเดียว: ตัวนี้ไปอ่านข้อมูลเองหลายที่ → สรุปให้คนอ่าน
+// → เขียนผลกลับลงคำขอ (aiSuggestion · aiReason) → จดบันทึกลงโฟลเดอร์ย่อย aiLog
+// สถานะคำขอไม่เปลี่ยนเอง ต้องให้ผู้แทนกดรับหรือปฏิเสธเท่านั้น
+
+let current = null;     // คำขอที่เปิดอยู่
+let aiWired = false;    // ผูกปุ่มครั้งเดียว load() ถูกเรียกซ้ำหลังเปลี่ยนสถานะ
+
+async function setupAi(r) {
+  current = r;
+  if (isBuyer) return;  // ผู้ช่วยตัวนี้มีไว้ให้ผู้แทนอ่านก่อนตัดสินใจ
+  $("aiCard").hidden = false;
+  if (r.aiSuggestion) showSummary(r.aiSuggestion, r.aiReason, r.aiUpdatedAt);
+
+  if (!(await hasAiKey())) {
+    $("aiSummarize").disabled = true;
+    $("aiSummarize").title = "ยังไม่ได้ใส่คีย์ AI";
+    if (!r.aiSuggestion) showAiMsg("ยังไม่ได้ใส่คีย์ผู้ช่วย AI — อ่านรายละเอียดแล้วตัดสินใจเองได้ตามปกติ", "muted");
+    return;
+  }
+  if (!aiWired) { $("aiSummarize").addEventListener("click", summarize); aiWired = true; }
+}
+
+async function summarize() {
+  const r = current;
+  const btn = $("aiSummarize");
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "กำลังให้ AI อ่านข้อมูล...";
+  const steps = [];  // AI ไปอ่านอะไรมาบ้าง — เก็บลง aiLog ให้ตรวจย้อนหลังได้
+
+  try {
+    // ขั้นที่ 1 — คำขอใบนี้ (ไม่ส่งชื่อร้านให้ AI เด็ดขาด ใช้แค่เขต ตามเส้นแดงข้อ 5)
+    showAiMsg("ขั้นที่ 1/4 — อ่านคำขอใบนี้...", "muted");
+    steps.push(`อ่านคำขอ ${r.id}`);
+
+    // ขั้นที่ 2 — ข้อมูลรายการยาจากโฟลเดอร์ products
+    showAiMsg("ขั้นที่ 2/4 — อ่านข้อมูลรายการยา...", "muted");
+    const p = r.productId ? await getDoc(doc(db, "products", r.productId)) : null;
+    const product = p?.exists() ? p.data() : null;
+    steps.push(product ? `อ่านรายการยา ${r.productId}` : "ไม่พบข้อมูลรายการยาในโฟลเดอร์ products");
+
+    // ขั้นที่ 3 — คำตอบที่ผู้แทนเขียนไว้แล้วในโฟลเดอร์ย่อย replies
+    showAiMsg("ขั้นที่ 3/4 — อ่านคำตอบของผู้แทนในคำขอนี้...", "muted");
+    const rs = await getDocs(collection(db, "requests", r.id, "replies"));
+    const replies = rs.docs.map(d => d.data());
+    steps.push(`อ่าน replies ${replies.length} รายการ`);
+
+    // ขั้นที่ 4 — คำขอรายการยาเดียวกันที่ยังรออยู่ในช่องทางเดียวกัน (ดูว่ามีความต้องการซ้ำในเขตไหน)
+    showAiMsg("ขั้นที่ 4/4 — ค้นคำขอรายการเดียวกันที่ยังรออยู่ แล้วส่งให้ AI สรุป...", "muted");
+    const qs = await getDocs(query(collection(db, "requests"), where("productId", "==", r.productId)));
+    const others = qs.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(x => x.id !== r.id && x.buyerChannel === r.buyerChannel && x.status === STATUS.PENDING);
+    steps.push(`พบคำขอรายการเดียวกันที่ยังรออยู่ ${others.length} ใบ`);
+
+    const input =
+      "คำขอที่กำลังพิจารณา\n" +
+      `รายการยา: ${r.productName}\n` +
+      (product ? `บริษัท: ${product.company || "-"}\n` : "") +
+      `จำนวน: ${r.qty} ${r.unit || "หน่วย"}\n` +
+      `ช่องทาง: ${r.buyerChannel} · เขต: ${r.buyerArea || "-"}\n` +
+      `ความเร่งด่วนที่ร้านเลือก: ${r.urgency || "ไม่ระบุ"}\n` +
+      `รายละเอียดที่ร้านพิมพ์: ${r.note || "-"}\n\n` +
+      `คำตอบของผู้แทนที่มีอยู่แล้ว (${replies.length})\n` +
+      (replies.length ? replies.map(x => `- ${x.message || "-"}`).join("\n") : "- ยังไม่มี") + "\n\n" +
+      `คำขอรายการเดียวกันที่ยังรออยู่ในช่องทางนี้ (${others.length})\n` +
+      (others.length
+        ? others.map(x => `- เขต ${x.buyerArea || "-"} · ${x.qty} ${x.unit || ""} · ${x.urgency || "ไม่ระบุ"}`).join("\n")
+        : "- ไม่มี");
+
+    const answer = await askAI(
+      "คุณเป็นผู้ช่วยของผู้แทนยา กำลังจะตัดสินใจว่าจะรับคำขอหายาใบนี้หรือไม่ " +
+      "สรุปเป็นภาษาไทยให้อ่านจบใน 30 วินาที " +
+      "กติกา: ห้ามตัดสินใจแทน ห้ามบอกว่าควรรับหรือไม่รับ · ห้ามให้คะแนน เปอร์เซ็นต์ ดาว หรือจัดอันดับ · " +
+      "ห้ามพูดถึงราคา ค่าส่ง หรือการชำระเงิน · ห้ามเดาตารางเดินทางของผู้แทน · ใช้เฉพาะข้อมูลที่ให้ไว้ " +
+      'ตอบเป็น JSON อย่างเดียว รูปแบบ {"summary":"ร้านต้องการอะไร เท่าไหร่ ด่วนแค่ไหน 1-2 ประโยค",' +
+      '"reason":"สิ่งที่ควรดูก่อนตัดสินใจ 2-3 ข้อ คั่นด้วยขึ้นบรรทัดใหม่"}',
+      input
+    );
+    const out = parseJson(answer);
+    if (!out?.summary) throw new Error("อ่านคำตอบของ AI ไม่ออก ลองกดใหม่อีกครั้ง");
+    const summary = String(out.summary).trim();
+    const reason = String(out.reason ?? "").trim();
+
+    // เขียนผลกลับลงคำขอ — แตะเฉพาะช่องของ AI ไม่แตะ status
+    await updateDoc(ref, { aiSuggestion: summary, aiReason: reason, aiUpdatedAt: serverTimestamp() });
+
+    // จดบันทึกทุกครั้งที่เรียก ลงโฟลเดอร์ย่อย requests/{id}/aiLog
+    await addDoc(collection(db, "requests", r.id, "aiLog"), {
+      input, output: answer, steps,
+      model: await aiModel(),
+      byUid: me.uid,
+      createdAt: serverTimestamp(),
+    });
+
+    current = { ...r, aiSuggestion: summary, aiReason: reason };
+    showSummary(summary, reason, null);
+  } catch (err) {
+    // เรียกไม่สำเร็จ ระบบต้องไม่ค้าง ปุ่มรับ/ปฏิเสธยังกดได้ตามปกติ
+    showAiMsg(`เรียก AI ไม่สำเร็จ — ${esc(err.message)} · อ่านรายละเอียดแล้วกดรับหรือปฏิเสธเองได้ตามปกติ`, "err");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
+function showSummary(summary, reason, at) {
+  const when = at?.toDate ? ` · สรุปเมื่อ ${at.toDate().toLocaleString("th-TH")}` : "";
+  const points = String(reason || "").split("\n").map(s => s.replace(/^[-•\d.)\s]+/, "").trim()).filter(Boolean);
+  showAiMsg(
+    `<strong>ข้อเสนอจาก AI — โปรดตรวจสอบก่อนยืนยัน</strong><br>${esc(summary)}` +
+    (points.length ? `<ul class="ai-steps">${points.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : "") +
+    `<p class="meta" style="margin:8px 0 0">AI สรุปให้อ่านเท่านั้น การรับหรือปฏิเสธเป็นการตัดสินใจของคุณ${when}</p>`,
+    "ai"
+  );
+}
+
+function showAiMsg(html, kind) {
+  $("aiResult").innerHTML = html;
+  $("aiResult").className = "ai-box " + kind;
+  $("aiResult").hidden = false;
 }
 
 // แก้เฉพาะช่อง status ช่องอื่นไม่แตะ

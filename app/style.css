@@ -108,4 +108,14 @@ button.ghost { background: transparent; }
 .kv { display: grid; grid-template-columns: 150px 1fr; gap: 6px 14px; font-size: 14px; margin: 14px 0; }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; }
+
+/* กล่องผลจากผู้ช่วย AI — ต้องดูออกทันทีว่าเป็นข้อเสนอของ AI ไม่ใช่ข้อมูลที่คนยืนยันแล้ว */
+.ai-box {
+  margin-top: 12px; padding: 12px 14px; border-radius: 10px; font-size: 14px;
+  border: 1px dashed var(--line); background: var(--bg); color: var(--text);
+}
+.ai-box.ai    { border-color: var(--accent); }
+.ai-box.err   { border-color: var(--rejected); color: var(--rejected); }
+.ai-box.muted { color: var(--muted); }
+.ai-steps { margin: 10px 0 0; padding-left: 18px; font-size: 13px; color: var(--muted); }
 @media (max-width: 520px) { .kv { grid-template-columns: 1fr; } .kv dd { margin-bottom: 8px; } }

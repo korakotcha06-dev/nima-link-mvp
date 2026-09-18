@@ -14,6 +14,8 @@ Firestore + Firebase Auth (Email/Password) + Firebase Hosting
 | โฟลเดอร์ | คืออะไร | ช่องสำคัญ |
 |---|---|---|
 | `requests` | **โฟลเดอร์หลัก** — คำขอหายา | `buyerId` (uid ของคนที่ล็อกอิน) · `buyerName` · `buyerChannel` · `buyerArea` · `productId` · `productName` · `qty` · `unit` · `note` · `status` · `createdAt` |
+| `requests` (ช่องของ AI) | ผลของผู้ช่วย AI — เขียนโดย `detail.html` เท่านั้น ห้ามแตะ `status` | `urgency` · `aiSuggestion` · `aiReason` · `aiUpdatedAt` |
+| `requests/{id}/aiLog` | **โฟลเดอร์ย่อย** — บันทึกทุกครั้งที่ AI ระดับ 2 ทำงาน | `input` · `output` · `steps` · `model` · `byUid` · `createdAt` |
 | `requests/{id}/replies` | **โฟลเดอร์ย่อย** — คำตอบของผู้แทนในคำขอใบนั้น | `repId` · `repName` · `message` · `contactPhone` · `createdAt` |
 | `products` | **โฟลเดอร์ประเภท** — รายการยาที่เลือกได้ | `name` · `company` · `channel` |
 | `users` | คนที่ใช้ระบบ · document id = uid จาก Firebase Auth | `email` · `name` · `role` · `channel` · `area` |

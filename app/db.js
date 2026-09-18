@@ -13,6 +13,13 @@ export const STATUS = {
   REJECTED: "ปฏิเสธ",
 };
 
+// ความเร่งด่วนของคำขอ — ร้านเลือกเอง หรือให้ AI เสนอจากช่องรายละเอียด
+export const URGENCY = {
+  URGENT: "ด่วนมาก",
+  SOON: "ด่วน",
+  NORMAL: "ปกติ",
+};
+
 export function isConfigured() {
   return !String(firebaseConfig.projectId).includes("ใส่ค่าจริง");
 }

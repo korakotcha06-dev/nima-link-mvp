@@ -15,3 +15,11 @@ firebase-debug.log
 *-firebase-adminsdk-*.json
 .env
 .env.*
+
+# ── คีย์ AI (OpenRouter) ของหลักสูตร ห้ามขึ้น repo เด็ดขาด ──
+# คีย์อยู่ใน app/ai-config.js ไฟล์เดียว · ใน repo มีแค่ app/ai-config.example.js
+# ก่อน push ทุกครั้ง: git status แล้วอ่านเองว่าไม่มี app/ai-config.js ในรายการ
+app/ai-config.js
+
+# worktree ของ Claude Code
+.claude/worktrees/
