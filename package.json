@@ -1,0 +1,13 @@
+{
+  "name": "nima-link-mvp",
+  "private": true,
+  "description": "npm ใช้กับเครื่องมือทดสอบ (Playwright) เท่านั้น ตัวเว็บยังเป็น HTML/JS ล้วน ไม่มีขั้นตอน build",
+  "scripts": {
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0"
+  }
+}

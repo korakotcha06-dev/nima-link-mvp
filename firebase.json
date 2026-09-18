@@ -15,7 +15,14 @@
       ".firebase/**",
       "**/node_modules/**",
       "*.md",
-      "docs/**"
+      "docs/**",
+      ".claude/**",
+      "tests/**",
+      "package.json",
+      "package-lock.json",
+      "playwright.config.js",
+      "test-results/**",
+      "playwright-report/**"
     ],
     "headers": [
       {

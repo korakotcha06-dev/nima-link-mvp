@@ -23,3 +23,8 @@ app/ai-config.js
 
 # worktree ของ Claude Code
 .claude/worktrees/
+
+# ── Playwright (สัปดาห์ที่ 9) ──
+test-results/
+playwright-report/
+blob-report/
