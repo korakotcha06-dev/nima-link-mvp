@@ -23,41 +23,65 @@ import {
 test.describe(
   "ACL ที่ชั้นฐานข้อมูล — พิสูจน์ security rules รายคอลเลกชันตามตาราง ACL.md",
   () => {
-    test("buyer ยิงอ่าน requests ของร้านอื่นตรง ๆ ต้องโดน permission-denied", async ({ page }) => {
-      await loginOrSignup(page, ACCOUNTS.buyerOtc);
+    // 🔴 สองเคสนี้เคย hardcode id ของข้อมูลตัวอย่าง (r001) ซึ่งเปราะมาก
+    // พอข้อมูลตัวอย่างถูกลบทิ้ง กฎจะตอบว่า "ไม่พบเอกสาร" แทน "ไม่มีสิทธิ์"
+    // (กฎ get ยอมให้ resource == null ผ่าน เพื่อให้หน้าเว็บขึ้น "ไม่พบคำขอใบนี้" ได้)
+    // เทสจึงกลายเป็นแดงผิดเหตุ — ตอนนี้สร้างเอกสารของร้านอื่นขึ้นมาเองแล้วค่อยลองอ่าน
 
+    test("buyer ยิงอ่าน requests ของร้านอื่นตรง ๆ ต้องโดน permission-denied", async ({ page }) => {
+      // ร้านที่สองสร้างคำขอของตัวเองไว้ก่อน
+      await loginOrSignup(page, ACCOUNTS.buyerOtc2);
+      const otherId = await createOwnedRequestViaDb(
+        page, ACCOUNTS.buyerOtc2, `E2E-db-ของร้านอื่น-${Date.now()}`);
+      await logout(page);
+
+      // ร้านแรกพยายามอ่านใบของร้านที่สอง
+      await loginOrSignup(page, ACCOUNTS.buyerOtc);
       const res = await runInPage(
         page,
         async (db, fs, auth, data) => {
           const snap = await fs.getDoc(fs.doc(db, "requests", data.id));
           return snap.exists();
         },
-        { id: "r001" } // ข้อมูลเมล็ด (seed) ของร้านอื่น ไม่ใช่ของ buyerOtc
+        { id: otherId }
       );
+      await logout(page);
 
       expect(res.ok, `คาดว่าจะโดนปฏิเสธ แต่กลับอ่านผ่าน: ${JSON.stringify(res)}`).toBe(false);
       expect(res.code).toBe("permission-denied");
 
+      // เก็บกวาด — เจ้าของเท่านั้นที่ลบได้
+      await loginOrSignup(page, ACCOUNTS.buyerOtc2);
+      await deleteRequestViaDb(page, otherId).catch(() => {});
       await logout(page);
     });
 
     test("rep ยิงอ่าน requests ข้ามช่องทาง (MC ดู OTC) ตรง ๆ ต้องโดน permission-denied", async ({
       page,
     }) => {
-      await loginOrSignup(page, ACCOUNTS.repMc);
+      // สร้างคำขอฝั่ง OTC ขึ้นมาจริง ๆ
+      await loginOrSignup(page, ACCOUNTS.buyerOtc);
+      const otcId = await createOwnedRequestViaDb(
+        page, ACCOUNTS.buyerOtc, `E2E-db-ข้ามช่องทาง-${Date.now()}`);
+      await logout(page);
 
+      // ผู้แทนฝั่ง MC พยายามอ่าน
+      await loginOrSignup(page, ACCOUNTS.repMc);
       const res = await runInPage(
         page,
         async (db, fs, auth, data) => {
           const snap = await fs.getDoc(fs.doc(db, "requests", data.id));
           return snap.exists();
         },
-        { id: "r001" } // r001 เป็นช่องทาง OTC — repMc อยู่ช่องทาง MC
+        { id: otcId }
       );
+      await logout(page);
 
       expect(res.ok, `คาดว่าจะโดนปฏิเสธ แต่กลับอ่านผ่าน: ${JSON.stringify(res)}`).toBe(false);
       expect(res.code).toBe("permission-denied");
 
+      await loginOrSignup(page, ACCOUNTS.buyerOtc);
+      await deleteRequestViaDb(page, otcId).catch(() => {});
       await logout(page);
     });
 
