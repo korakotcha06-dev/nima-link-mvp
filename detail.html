@@ -21,6 +21,26 @@
 
   <div id="body"><p class="hint">กำลังโหลด...</p></div>
 
+  <!-- คำตอบของผู้แทน — เห็นได้เฉพาะร้านเจ้าของคำขอ กับผู้แทนคนที่กดรับใบนี้
+       เบอร์ติดต่ออยู่ในนี้ จึงเปิดหลังด่าน "กดรับ" เท่านั้น ตามที่ SCOPE.md วางไว้ -->
+  <div id="replyCard" class="card" hidden>
+    <div class="row"><span class="name">คำตอบจากผู้แทน</span></div>
+    <div id="replyList"></div>
+
+    <div id="replyForm" hidden style="margin-top:16px">
+      <label for="replyMsg">ข้อความถึงร้าน</label>
+      <textarea id="replyMsg" placeholder="เช่น มีของครับ ส่งได้ศุกร์นี้ ขอคุยเรื่องจำนวนทางโทรศัพท์"></textarea>
+
+      <label for="replyPhone">เบอร์ติดต่อกลับ (ไม่บังคับ)</label>
+      <input id="replyPhone" type="tel" placeholder="เช่น 08x-xxx-xxxx">
+
+      <div class="actions">
+        <button type="button" id="replySend" class="primary">ส่งคำตอบ</button>
+      </div>
+      <p class="msg" id="replyStatus"></p>
+    </div>
+  </div>
+
   <!-- ผู้ช่วย AI ระดับ 2 — ไปอ่านข้อมูลหลายที่เอง แล้วสรุปให้ผู้แทนอ่านก่อนตัดสินใจรับหรือปฏิเสธ -->
   <div id="aiCard" class="card" hidden>
     <div class="row"><span class="name">ผู้ช่วยสรุปคำขอให้ผู้แทน</span></div>
@@ -62,24 +82,56 @@ function deny(reason) {
   $("body").innerHTML = `<p class="hint">${esc(reason)}<br><a href="index.html">กลับไปหน้ารายการ</a></p>`;
 }
 
+// ชื่อร้านอยู่ในเอกสารที่ล็อกแยกไว้ — กฎเปิดให้เฉพาะร้านเจ้าของ กับผู้แทนคนที่กดรับใบนี้
+async function readBuyerName() {
+  try {
+    const s = await getDoc(doc(db, "requests", id, "identity", "buyer"));
+    return s.exists() ? s.data().buyerName : "";
+  } catch {
+    return "";   // ถูกกฎปฏิเสธ หรือยังไม่มีเอกสาร → ปิดบังไว้ตามเดิม ไม่ทำให้ทั้งหน้าพัง
+  }
+}
+
 async function load() {
   if (!id) return deny("ไม่ได้ระบุว่าเป็นคำขอใบไหน");
-  const snap = await getDoc(ref);
+
+  // กฎฝั่งฐานข้อมูลปฏิเสธการอ่านคำขอที่ไม่ใช่ของเรา การอ่านจึง "โยน" ไม่ใช่ "คืนค่าว่าง"
+  // ถ้าไม่รับไว้ตรงนี้ คนที่แก้ URL ไปเปิดคำขอร้านอื่นจะค้างที่ "กำลังโหลด..." ตลอดไป
+  let snap;
+  try {
+    snap = await getDoc(ref);
+  } catch (e) {
+    return deny(e.code === "permission-denied"
+      ? "คุณไม่มีสิทธิ์ดูคำขอใบนี้"
+      : "อ่านคำขอไม่ได้: " + (e.code || e.message));
+  }
   if (!snap.exists()) return deny("ไม่พบคำขอใบนี้ อาจถูกลบไปแล้ว");
-  const r = snap.data();
+
+  // buyerName ถูกย้ายออกไป requests/{id}/identity/buyer แล้ว
+  // เอกสารเก่าที่ยังมีช่องนี้ค้างอยู่ให้ทิ้งตั้งแต่ตรงนี้ จะได้ไม่มีทางหลุดขึ้นจอ
+  const { buyerName: _legacyBuyerName, ...r } = snap.data();
 
   // ACL — ร้านดูของร้านอื่นไม่ได้ · ผู้แทนดูข้ามช่องทางไม่ได้ (OTC/MC hard gate)
   if (isBuyer && r.buyerId !== me.uid) return deny("คำขอใบนี้เป็นของร้านอื่น คุณไม่มีสิทธิ์ดู");
   if (!isBuyer && r.buyerChannel !== me.channel) return deny(`คำขอใบนี้อยู่ช่องทาง ${r.buyerChannel} คนละช่องทางกับคุณ`);
 
-  // เส้นแดงข้อ 6 — ผู้แทนเห็นชื่อร้านต่อเมื่อกดรับคำขอแล้ว
-  const revealed = isBuyer || r.status === STATUS.ACCEPTED;
-  const buyerLine = revealed
-    ? esc(r.buyerName)
-    : `<span class="masked">ร้านในเขต ${esc(r.buyerArea || "-")} (ยังไม่เปิดเผยชื่อ)</span>`;
+  // 🔴 เส้นแดงข้อ 5 (PDPA) — ผู้แทนเห็นชื่อร้านได้ต่อเมื่อ "ตัวเอง" เป็นคนกดรับใบนี้
+  // เงื่อนไขเดิมถามแค่ว่าสถานะเป็น "รับแล้ว" หรือยัง ไม่ได้ถามว่าใครรับ
+  // ผู้แทนคนอื่นทั้งช่องทางจึงเห็นชื่อร้านตามไปด้วย — ผิด ACL ที่ว่า "หลังกดรับแล้วเท่านั้น"
+  const revealedToMe = !isBuyer && r.status === STATUS.ACCEPTED && r.acceptedBy === me.uid;
+  const masked = `<span class="masked">ร้านในเขต ${esc(r.buyerArea || "-")} (ยังไม่เปิดเผยชื่อ)</span>`;
+
+  let buyerLine = masked;
+  if (isBuyer) {
+    buyerLine = esc(me.name);                       // ชื่อร้านตัวเอง อ่านจากโปรไฟล์ ไม่ต้องยิงเพิ่ม
+  } else if (revealedToMe) {
+    const name = await readBuyerName();             // กฎจะปฏิเสธถ้าไม่ใช่คนที่กดรับ
+    if (name) buyerLine = esc(name);
+  }
 
   const canChangeStatus = !isBuyer && r.status === STATUS.PENDING;  // ผู้แทนเท่านั้น และเปลี่ยนได้ครั้งเดียว
   const canDelete = isBuyer && r.buyerId === me.uid;                // ร้านเจ้าของเท่านั้น
+  const canEdit = canDelete && r.status === STATUS.PENDING;         // ตอบไปแล้วแก้ไม่ได้
 
   $("body").innerHTML = `
     <div class="card">
@@ -107,6 +159,11 @@ async function load() {
       ${!isBuyer && !canChangeStatus ? `<p class="meta">คำขอใบนี้ตอบไปแล้ว เปลี่ยนสถานะซ้ำไม่ได้</p>` : ""}
       ${isBuyer ? `<p class="meta">สถานะเปลี่ยนโดยผู้แทนเท่านั้น — คุณอนุมัติคำขอของตัวเองไม่ได้</p>` : ""}
 
+      ${canEdit ? `
+        <div class="actions">
+          <button id="btnEdit" class="ghost">แก้ไขคำขอนี้</button>
+        </div>` : ""}
+
       ${canDelete ? `
         <div class="actions">
           <button id="askDelete" class="danger">ลบคำขอนี้</button>
@@ -126,13 +183,89 @@ async function load() {
     $("accept").onclick = () => setStatus(STATUS.ACCEPTED);
     $("reject").onclick = () => setStatus(STATUS.REJECTED);
   }
+  if (canEdit) {
+    $("btnEdit").onclick = () => location.href = `edit.html?id=${encodeURIComponent(id)}`;
+  }
   if (canDelete) {
     // ถามยืนยันก่อนลบทุกครั้ง — ใช้กล่องในหน้า ไม่ใช่ confirm() ของเบราว์เซอร์
     $("askDelete").onclick    = () => { $("confirmBox").hidden = false; $("askDelete").disabled = true; };
     $("cancelDelete").onclick = () => { $("confirmBox").hidden = true;  $("askDelete").disabled = false; };
     $("doDelete").onclick     = remove;
   }
+  await renderReplies({ id: snap.id, ...r });
   await setupAi({ id: snap.id, ...r });
+}
+
+
+// ── คำตอบของผู้แทน (requests/{id}/replies) ────────────────────────────────
+// ช่องทางแลกเบอร์ติดต่อ · กฎฝั่งฐานข้อมูลเปิดให้เฉพาะ "ร้านเจ้าของ" กับ "ผู้แทนคนที่กดรับใบนี้"
+// UI จึงต้องบังคับให้ตรงกัน ไม่ใช่โชว์ฟอร์มแล้วค่อยให้โดนปฏิเสธตอนกดส่ง
+
+function canReply(r) {
+  return !isBuyer && r.status === STATUS.ACCEPTED && r.acceptedBy === me.uid;
+}
+function canSeeReplies(r) {
+  return (isBuyer && r.buyerId === me.uid) || canReply(r);
+}
+
+async function renderReplies(r) {
+  if (!canSeeReplies(r)) { $("replyCard").hidden = true; return; }
+  $("replyCard").hidden = false;
+  $("replyForm").hidden = !canReply(r);
+  $("replySend").onclick = () => sendReply(r);   // assignment ไม่ใช่ addEventListener — load() ถูกเรียกซ้ำได้
+
+  try {
+    const snap = await getDocs(collection(db, "requests", r.id, "replies"));
+    // เรียงเก่า→ใหม่ฝั่งหน้าเว็บ — โปรเจกต์นี้เลี่ยง orderBy เพื่อไม่ต้องสร้าง composite index
+    const rows = snap.docs.map(d => d.data())
+      .sort((a, b) => (a.createdAt?.seconds ?? 0) - (b.createdAt?.seconds ?? 0));
+
+    $("replyList").innerHTML = rows.length
+      ? rows.map(x => `
+        <div class="card">
+          <div class="row"><span class="name">${esc(x.repName || "ผู้แทน")}</span></div>
+          <p class="note">${esc(x.message)}</p>
+          <p class="meta">${x.contactPhone ? "ติดต่อ " + esc(x.contactPhone) + " · " : ""}${
+            x.createdAt?.toDate ? esc(x.createdAt.toDate().toLocaleString("th-TH")) : ""}</p>
+        </div>`).join("")
+      : `<p class="hint">ยังไม่มีคำตอบจากผู้แทน</p>`;
+  } catch (e) {
+    // อ่านไม่ได้ต้องไม่ทำให้ทั้งหน้าพัง — รายละเอียดคำขอยังต้องอ่านได้ตามปกติ
+    $("replyList").innerHTML = `<p class="hint">อ่านคำตอบไม่ได้: ${esc(e.code || e.message)}</p>`;
+  }
+}
+
+async function sendReply(r) {
+  const message = $("replyMsg").value.trim();
+  if (!message) {
+    $("replyStatus").className = "msg err";
+    $("replyStatus").textContent = "พิมพ์ข้อความก่อนกดส่ง";
+    return;
+  }
+  const btn = $("replySend");
+  btn.disabled = true;
+  $("replyStatus").className = "msg";
+  $("replyStatus").textContent = "กำลังส่ง...";
+  try {
+    await addDoc(collection(db, "requests", r.id, "replies"), {
+      repId: me.uid,                 // มาจากคนที่ล็อกอินเท่านั้น ผู้ใช้พิมพ์เองไม่ได้
+      repName: me.name,
+      message,
+      contactPhone: $("replyPhone").value.trim(),
+      createdAt: serverTimestamp(),
+    });
+    $("replyMsg").value = "";
+    $("replyPhone").value = "";
+    $("replyStatus").textContent = "";
+    await renderReplies(r);
+  } catch (e) {
+    $("replyStatus").className = "msg err";
+    $("replyStatus").textContent = e.code === "permission-denied"
+      ? "ส่งไม่ได้ — ตอบได้เฉพาะผู้แทนที่กดรับคำขอใบนี้เท่านั้น"
+      : "ส่งไม่สำเร็จ: " + (e.code || e.message);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ── ผู้ช่วย AI ระดับ 2 (agentic) ───────────────────────────────
@@ -179,16 +312,27 @@ async function summarize() {
 
     // ขั้นที่ 3 — คำตอบที่ผู้แทนเขียนไว้แล้วในโฟลเดอร์ย่อย replies
     showAiMsg("ขั้นที่ 3/4 — อ่านคำตอบของผู้แทนในคำขอนี้...", "muted");
-    const rs = await getDocs(collection(db, "requests", r.id, "replies"));
-    const replies = rs.docs.map(d => d.data());
-    steps.push(`อ่าน replies ${replies.length} รายการ`);
+    // กฎเปิดให้อ่าน replies เฉพาะร้านเจ้าของกับผู้แทนที่กดรับใบนี้
+    // ผู้แทนที่กำลังชั่งใจว่าจะรับดีไหม จึงอ่านไม่ได้ตามออกแบบ — ต้องไม่ทำให้การสรุปทั้งก้อนล้ม
+    let replies = [];
+    try {
+      const rs = await getDocs(collection(db, "requests", r.id, "replies"));
+      replies = rs.docs.map(d => d.data());
+      steps.push(`อ่าน replies ${replies.length} รายการ`);
+    } catch (e) {
+      steps.push(`อ่าน replies ไม่ได้ (${e.code || e.message}) — ข้ามขั้นนี้`);
+    }
 
     // ขั้นที่ 4 — คำขอรายการยาเดียวกันที่ยังรออยู่ในช่องทางเดียวกัน (ดูว่ามีความต้องการซ้ำในเขตไหน)
     showAiMsg("ขั้นที่ 4/4 — ค้นคำขอรายการเดียวกันที่ยังรออยู่ แล้วส่งให้ AI สรุป...", "muted");
-    const qs = await getDocs(query(collection(db, "requests"), where("productId", "==", r.productId)));
+    // กรองด้วย where ตัวเดียวคือ buyerChannel แล้วคัด productId กับ status ฝั่งหน้าเว็บ
+    // เหตุผล: กฎ list ของ requests รับได้แค่รูป buyerId ของตัวเอง หรือ buyerChannel ของผู้แทน
+    // ถ้ายิงด้วย productId เฉย ๆ จะโดนปฏิเสธทั้ง query · และวิธีนี้ยังเลี่ยง composite index ตามสำนวนเดิมของโปรเจกต์
+    const qs = await getDocs(query(collection(db, "requests"), where("buyerChannel", "==", me.channel)));
     const others = qs.docs
-      .map(d => ({ id: d.id, ...d.data() }))
-      .filter(x => x.id !== r.id && x.buyerChannel === r.buyerChannel && x.status === STATUS.PENDING);
+      // ทิ้ง buyerName ของเอกสารเก่าตั้งแต่ต้นทาง — prompt ของ AI ต้องไม่มีชื่อร้านเด็ดขาด ใช้ได้แค่ "เขต"
+      .map(d => { const { buyerName, ...rest } = d.data(); return { id: d.id, ...rest }; })
+      .filter(x => x.id !== r.id && x.productId === r.productId && x.status === STATUS.PENDING);
     steps.push(`พบคำขอรายการเดียวกันที่ยังรออยู่ ${others.length} ใบ`);
 
     const input =
@@ -259,12 +403,17 @@ function showAiMsg(html, kind) {
   $("aiResult").hidden = false;
 }
 
-// แก้เฉพาะช่อง status ช่องอื่นไม่แตะ
+// แก้เฉพาะ status (กับ acceptedBy ตอนกดรับ) ช่องอื่นไม่แตะ
+// กดรับต้องเซ็น acceptedBy ไปพร้อมกันในคำสั่งเดียว เพราะกฎบังคับไว้แบบนั้น
+// และเป็นตัวที่เปิดสิทธิ์ให้ "คนกดรับคนนี้คนเดียว" อ่าน identity/buyer ได้
+// กดปฏิเสธห้ามเขียน acceptedBy — การปฏิเสธไม่ทำให้ใครได้สิทธิ์เห็นชื่อร้าน
 async function setStatus(next) {
   try {
     $("msg").className = "msg";
     $("msg").textContent = "กำลังบันทึก...";
-    await updateDoc(ref, { status: next });
+    await updateDoc(ref, next === STATUS.ACCEPTED
+      ? { status: next, acceptedBy: me.uid }
+      : { status: next });
     await load();
   } catch (e) {
     $("msg").className = "msg err";
