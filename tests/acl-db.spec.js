@@ -5,10 +5,9 @@
 // SDK ตรง ๆ จาก page context ผ่าน page.evaluate() — import จาก CDN gstatic 12.18.0 เวอร์ชัน
 // เดียวกับที่หน้าเว็บใช้ (ดู tests/helpers.js: runInPage) — ข้าม UI ไปทดสอบกฎโดยตรง
 //
-// 🔴 ตอนนี้ firestore.rules มีกฎเดียวคือ "ต้องล็อกอินก่อน" (ดู ACL.md หัวข้อ "บังคับใช้ที่ไหน")
-// เทสทั้งชุดในไฟล์นี้จึงคาดว่าจะ FAIL ถ้าไปรันจริง — นั่นถูกต้องแล้ว ไม่ใช่บั๊กของเทส
-// เทสชุดนี้คือ "ด่านวัดงาน" ของฝั่งที่เขียน security rules รายคอลเลกชัน — เมื่อกฎนั้นขึ้นครบ
-// ตามตาราง ACL.md แล้ว ให้เอา .fixme ออกเพื่อเปิดใช้งานเทสชุดนี้จริง
+// เทสชุดนี้คือ "ด่านวัดงาน" ของ security rules รายคอลเลกชัน
+// เคยถูกปิดด้วย .fixme ไว้ตอนที่ firestore.rules ยังมีกฎเดียวคือ "ต้องล็อกอินก่อน"
+// กฎรายคอลเลกชันตามตาราง ACL.md ขึ้น production แล้วเมื่อ 20 ก.ย. 2569 จึงเปิดใช้งานจริง
 //
 // ห้ามแก้เทสให้ผ่านเอง ห้ามลดความเข้มของสิ่งที่ตรวจ ห้ามแตะ firestore.rules จากไฟล์นี้
 import { test, expect } from "@playwright/test";
@@ -21,8 +20,8 @@ import {
   runInPage,
 } from "./helpers.js";
 
-test.describe.fixme(
-  "ACL ที่ชั้นฐานข้อมูล — จะผ่านเมื่อ security rules รายคอลเลกชันขึ้นแล้ว (ตาม ACL.md); ตอนนี้ยังหลวมอยู่ตั้งใจ",
+test.describe(
+  "ACL ที่ชั้นฐานข้อมูล — พิสูจน์ security rules รายคอลเลกชันตามตาราง ACL.md",
   () => {
     test("buyer ยิงอ่าน requests ของร้านอื่นตรง ๆ ต้องโดน permission-denied", async ({ page }) => {
       await loginOrSignup(page, ACCOUNTS.buyerOtc);

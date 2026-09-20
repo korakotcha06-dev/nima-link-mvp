@@ -115,6 +115,18 @@ export async function runInPage(page, workFn, data = null) {
       const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
       const db = fs.getFirestore(app);
       const auth = authMod.getAuth(app);
+
+      // 🔴 Firebase Auth กู้ session จาก IndexedDB แบบ async — ถ้าไม่รอตรงนี้
+      // auth.currentUser จะเป็น null ทั้งที่หน้าเว็บล็อกอินอยู่ แล้วงานข้างล่างจะตาย
+      // ที่ null deref แทนที่จะได้คำตอบจากกฎ (เทสจะ "แดงผิดเหตุ" หรือแย่กว่านั้นคือ
+      // "เขียวผิดเหตุ" เพราะถูกปฏิเสธในฐานะคนไม่ได้ล็อกอิน ไม่ใช่เพราะ ACL)
+      if (auth.authStateReady) {
+        await auth.authStateReady();
+      } else {
+        await new Promise(resolve => {
+          const stop = authMod.onAuthStateChanged(auth, () => { stop(); resolve(); });
+        });
+      }
       // eslint-disable-next-line no-new-func -- workFn ถูกส่งมาเป็นข้อความ (ข้าม page.evaluate boundary) แล้วประกอบกลับที่นี่
       const fn = new Function("db", "fs", "auth", "data", `return (${workFnStr})(db, fs, auth, data);`);
       try {
@@ -135,9 +147,10 @@ export async function createOwnedRequestViaDb(page, account, note) {
   const res = await runInPage(
     page,
     async (db, fs, auth, data) => {
+      // ห้ามใส่ buyerName ลงเอกสารคำขอ — ชื่อร้านย้ายไป requests/{id}/identity/buyer แล้ว
+      // และกฎ create ปฏิเสธเอกสารที่มีช่องนี้ติดมา (เส้นแดงข้อ 5 · PDPA)
       const ref = await fs.addDoc(fs.collection(db, "requests"), {
         buyerId: auth.currentUser.uid,
-        buyerName: data.buyerName,
         buyerChannel: data.channel,
         buyerArea: data.area,
         productId: "e2e-product",

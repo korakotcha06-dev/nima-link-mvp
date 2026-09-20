@@ -89,7 +89,11 @@ test.describe.serial("เดินเรื่องคำขอหนึ่ง�
     await loginOrSignup(page, ACCOUNTS.buyerOtc2);
 
     await page.goto(`/detail.html?id=${requestId}`);
-    await expect(page.getByText("คำขอใบนี้เป็นของร้านอื่น คุณไม่มีสิทธิ์ดู")).toBeVisible();
+    // รับได้ทั้งสองข้อความ เพราะมีด่านปฏิเสธสองชั้นและชั้นไหนตอบก่อนก็ถูกต้องทั้งคู่:
+    //   · กฎฝั่งฐานข้อมูลปฏิเสธการอ่าน → "คุณไม่มีสิทธิ์ดูคำขอใบนี้" (ข้อความกลาง ไม่บอกใบ้ว่าใบนี้เป็นของใคร)
+    //   · โค้ดฝั่งหน้าเว็บเช็คความเป็นเจ้าของ → "คำขอใบนี้เป็นของร้านอื่น ..."
+    // สิ่งที่ต้องพิสูจน์คือ "ต้องถูกปฏิเสธและต้องไม่เห็นรายละเอียด" ไม่ใช่ถ้อยคำ
+    await expect(page.getByText(/ไม่มีสิทธิ์ดู/)).toBeVisible();
     // ต้องไม่เห็นรายละเอียดคำขอเลย (มองไม่เห็น — ไม่ได้เช็คว่าหายไปจาก DOM เพราะโปรเจกต์นี้ใช้ hidden/CSS ซ่อน ไม่ได้ลบทิ้ง)
     await expect(page.getByText("รายการยา")).not.toBeVisible();
 
@@ -101,8 +105,12 @@ test.describe.serial("เดินเรื่องคำขอหนึ่ง�
     await loginOrSignup(page, ACCOUNTS.repMc);
 
     await page.goto(`/detail.html?id=${requestId}`);
-    await expect(page.getByText("คนละช่องทางกับคุณ")).toBeVisible();
+    // ด่านปฏิเสธสองชั้นเหมือนเคสร้านอื่น — กฎฐานข้อมูลตอบก่อนก็ได้ข้อความกลาง
+    // โค้ดหน้าเว็บตอบก่อนก็ได้ข้อความที่ระบุช่องทาง ถูกต้องทั้งคู่
+    await expect(page.getByText(/คนละช่องทางกับคุณ|ไม่มีสิทธิ์ดู/)).toBeVisible();
     await expect(page.getByRole("button", { name: "รับคำขอ" })).not.toBeVisible();
+    // และต้องไม่หลุดรายละเอียดคำขอออกมาให้เห็นด้วย
+    await expect(page.getByText("รายการยา")).not.toBeVisible();
 
     await logout(page);
   });
