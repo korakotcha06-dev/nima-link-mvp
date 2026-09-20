@@ -27,13 +27,33 @@
     <button id="btnCatalog" class="ghost" hidden>ดูแคตตาล็อกรายการยา</button>
   </div>
 
+  <div class="card" id="tools" hidden>
+    <label for="q">ค้นหา</label>
+    <input id="q" type="search" placeholder="ชื่อยา · รายละเอียด · เขต">
+    <div class="two">
+      <div>
+        <label for="fStatus">สถานะ</label>
+        <select id="fStatus"></select>
+      </div>
+      <div>
+        <label for="fSort">เรียงตาม</label>
+        <select id="fSort">
+          <option value="new">ใหม่ → เก่า</option>
+          <option value="old">เก่า → ใหม่</option>
+          <option value="urgency">ความเร่งด่วน</option>
+          <option value="qty">จำนวน (มาก → น้อย)</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
   <div id="list"></div>
   <p class="log" id="log"></p>
 </div>
 
 <script type="module">
 import { collection, getDocs, query, where, doc, getDoc } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
-import { db, STATUS } from "./app/db.js";
+import { db, STATUS, URGENCY } from "./app/db.js";
 import { requireAuth, mountSignOut, ROLE, ROLE_LABEL } from "./app/auth.js";
 
 const $ = id => document.getElementById(id);
@@ -54,6 +74,13 @@ $("btnNew").hidden = !isBuyer;
 $("btnCatalog").hidden = isBuyer;
 $("btnNew").onclick = () => location.href = "new.html";
 $("btnCatalog").onclick = () => location.href = "catalog.html";
+
+// ตัวเลือกสถานะอ่านจาก STATUS ที่เดียว ห้าม hardcode สตริงไทยกระจาย
+$("fStatus").innerHTML = `<option value="">ทุกสถานะ</option>` +
+  Object.values(STATUS).map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join("");
+$("q").addEventListener("input", applyFilters);
+$("fStatus").addEventListener("change", applyFilters);
+$("fSort").addEventListener("change", applyFilters);
 
 $("sub").textContent = isBuyer
   ? "คำขอที่ร้านของคุณส่งไป — ร้านอื่นมองไม่เห็น"
@@ -82,11 +109,51 @@ async function readBuyerName(requestId) {
   }
 }
 
-function render(rows) {
+// ── ค้นหา / กรอง / เรียง — ทำฝั่งหน้าเว็บทั้งหมด ────────────────────────────
+// ห้ามเติม where หรือ orderBy ลงใน query เด็ดขาด กฎฝั่งฐานข้อมูลรับได้แค่ 2 รูปที่ยิงอยู่
+// ใส่เพิ่มแล้ว query จะถูกปฏิเสธทั้งอัน ไม่ใช่แค่กรองไม่ได้
+//
+// ค้นหาได้จาก productName · note · buyerArea เท่านั้น
+// ห้ามค้นด้วยชื่อร้าน — ไม่ได้อยู่บนเอกสารคำขอแล้ว และผู้แทนไม่มีสิทธิ์เห็นจนกว่าจะกดรับ
+let allRows = [];
+
+// ความเร่งด่วนเป็นค่าที่ "ร้านเลือกเอง" ไม่ใช่คะแนนที่ระบบคิดให้ จึงใช้เรียงได้
+// โดยไม่ขัดข้อห้ามข้อ 1 ของโปรเจกต์ (ห้ามให้คะแนน / จัดอันดับ)
+const URGENCY_ORDER = { [URGENCY.URGENT]: 0, [URGENCY.SOON]: 1, [URGENCY.NORMAL]: 2 };
+
+function applyFilters() {
+  const q = $("q").value.trim().toLowerCase();
+  const wantStatus = $("fStatus").value;
+  const sortBy = $("fSort").value;
+
+  let rows = allRows.filter(r => {
+    if (wantStatus && r.status !== wantStatus) return false;
+    if (!q) return true;
+    return [r.productName, r.note, r.buyerArea]
+      .some(v => String(v ?? "").toLowerCase().includes(q));
+  });
+
+  const at = r => r.createdAt?.seconds ?? 0;
+  rows = rows.slice().sort((a, b) =>
+    sortBy === "old"     ? at(a) - at(b)
+  : sortBy === "urgency" ? (URGENCY_ORDER[a.urgency] ?? 9) - (URGENCY_ORDER[b.urgency] ?? 9)
+  : sortBy === "qty"     ? (Number(b.qty) || 0) - (Number(a.qty) || 0)
+  :                        at(b) - at(a));
+
+  $("log").textContent = allRows.length
+    ? `แสดง ${rows.length} จาก ${allRows.length} รายการ · ${new Date().toLocaleString("th-TH")}`
+    : "";
+  render(rows, q !== "" || wantStatus !== "");
+}
+
+function render(rows, filtering) {
   if (!rows.length) {
-    $("list").innerHTML = isBuyer
-      ? `<p class="hint">ยังไม่มีคำขอของร้านคุณ — กด "สร้างคำขอใหม่" เพื่อเริ่ม</p>`
-      : `<p class="hint">ยังไม่มีคำขอในช่องทาง ${esc(me.channel)}</p>`;
+    // "กรองแล้วไม่เจอ" กับ "ยังไม่มีคำขอเลย" เป็นคนละเรื่อง ต้องบอกให้ต่างกัน
+    $("list").innerHTML = filtering
+      ? `<p class="hint">ไม่พบคำขอที่ตรงกับเงื่อนไขที่เลือก</p>`
+      : isBuyer
+        ? `<p class="hint">ยังไม่มีคำขอของร้านคุณ — กด "สร้างคำขอใหม่" เพื่อเริ่ม</p>`
+        : `<p class="hint">ยังไม่มีคำขอในช่องทาง ${esc(me.channel)}</p>`;
     return;
   }
   $("list").innerHTML = rows.map(r => `
@@ -122,8 +189,9 @@ async function load() {
     await Promise.all(rows.filter(revealedToMe)
       .map(async r => { r.revealedName = await readBuyerName(r.id); }));
 
-    $("log").textContent = `อ่านมาได้ ${rows.length} รายการ · ${new Date().toLocaleString("th-TH")}`;
-    render(rows);
+    allRows = rows;
+    $("tools").hidden = false;
+    applyFilters();
   } catch (e) {
     $("list").innerHTML = `<p class="hint">อ่านข้อมูลไม่ได้: ${esc(e.code || e.message)}</p>`;
   }

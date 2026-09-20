@@ -154,6 +154,21 @@ service cloud.firestore {
       allow update: if repSameChannel()
                     && changedKeys().hasOnly(AI_FIELDS());
 
+      // update ข้อ 3 — ร้านแก้ไขคำขอของตัวเอง (edit.html)
+      //
+      // 🔴 ข้อนี้คือประตูบานเดียวที่เปิดให้ buyer เขียนทับเอกสารคำขอ เขียนเป็น allowlist เท่านั้น
+      //    ห้ามเขียนเป็น "ห้ามแก้ status" เพราะพอมีช่องใหม่เพิ่มในอนาคตจะหลุดทันที
+      //    status / acceptedBy / buyerId / buyerChannel / buyerArea / createdAt / ช่อง AI
+      //    ไม่อยู่ในรายการ จึงขยับไม่ได้ทั้งหมด — ACL "เปลี่ยนสถานะคำขอไม่ได้ แม้เป็นคำขอของตัวเอง"
+      //
+      // แก้ได้เฉพาะตอนยังไม่มีใครตอบ — ผู้แทนตัดสินใจจากข้อมูลชุดไหน ต้องเป็นชุดนั้น
+      // productId กับ productName ต้องเปลี่ยนคู่กันเสมอ เพราะ productName เป็นชื่อที่จดซ้ำไว้ตั้งใจ
+      allow update: if isBuyer()
+                    && resource.data.buyerId == request.auth.uid
+                    && resource.data.status == PENDING()
+                    && changedKeys().hasOnly(
+                         ['productId', 'productName', 'qty', 'unit', 'note', 'urgency']);
+
 
       // ── requests/{requestId}/identity/{docId} ──────────────────────────────
       // 🔴 เส้นแดงข้อ 5 (PDPA) — "ผู้แทนห้ามเห็นชื่อ / ที่อยู่ร้าน จนกว่าจะกดรับคำขอ"
@@ -193,35 +208,38 @@ service cloud.firestore {
 
 
       // ── requests/{requestId}/replies/{replyId} ─────────────────────────────
-      // คำตอบของผู้แทนในคำขอใบนั้น — ยังไม่มี UI เขียน (เพื่อนร่วมทีมทำรอบหน้า)
-      // สิทธิ์ล้อ ACL แถวผู้แทน: ตอบได้เฉพาะคำขอในช่องทางเดียวกับตัวเอง
+      // คำตอบของผู้แทนในคำขอใบนั้น — ช่องทางแลกเบอร์ติดต่อกับร้าน
+      //
+      // 🔴 `contactPhone` เป็นข้อมูลติดต่อ การแลกเบอร์ต้องอยู่ "หลัง" ด่านกดรับ
+      //    ตามที่ SCOPE.md เขียนไว้ว่าข้อมูลติดต่ออยู่ในโฟลเดอร์นี้ "เพราะเปิดเผยได้
+      //    ต่อเมื่อผู้แทนกดรับคำขอแล้ว" · ผู้แทนที่ยังไม่รับงานไม่มีเหตุผลต้องส่งเบอร์เข้ามา
+      //    และผู้แทนเจ้าอื่นในช่องทางเดียวกันไม่มีเหตุผลต้องเห็นเบอร์ของคู่แข่ง
       match /replies/{replyId} {
 
         function parentReq() {
           return get(/databases/$(database)/documents/requests/$(requestId)).data;
         }
-        // ร้านเจ้าของคำขออ่านคำตอบได้ · ผู้แทนช่องทางเดียวกันอ่านได้
-        // ไม่อ้างอิง resource.data จึงยิง getDocs ทั้งโฟลเดอร์ย่อยได้โดยไม่ต้องใส่ where
-        // (detail.html ผู้ช่วย AI ขั้นที่ 3 ยิงแบบนั้นอยู่)
-        function canSeeParent() {
-          return signedIn() && (
-            parentReq().buyerId == request.auth.uid ||
-            (isRep() && parentReq().buyerChannel == myChannel())
-          );
+        // "ผู้แทนคนที่กดรับใบนี้" เท่านั้น ไม่ใช่ผู้แทนทุกคนในช่องทาง
+        function acceptedByMe() {
+          return isRep()
+                 && parentReq().status == ACCEPTED()
+                 && parentReq().get('acceptedBy', '') == request.auth.uid;
         }
 
-        allow get, list: if canSeeParent();
+        // อ่านได้ 2 กรณี — ร้านเจ้าของคำขอ กับผู้แทนคนที่กดรับ
+        // ไม่อ้างอิง resource.data จึงยิง getDocs ทั้งโฟลเดอร์ย่อยได้โดยไม่ต้องใส่ where
+        allow get, list: if signedIn() && (
+                           parentReq().buyerId == request.auth.uid || acceptedByMe());
 
-        // เขียนคำตอบได้เฉพาะผู้แทนในช่องทางเดียวกัน และต้องเซ็นชื่อด้วย uid ตัวเอง
-        allow create: if isRep()
-                      && parentReq().buyerChannel == myChannel()
+        // เขียนคำตอบได้เฉพาะผู้แทนที่กดรับใบนี้ และต้องเซ็นชื่อด้วย uid ตัวเอง
+        allow create: if acceptedByMe()
                       && request.resource.data.repId == request.auth.uid;
 
         // แก้ / ลบคำตอบของคนอื่นไม่ได้ และย้ายเจ้าของคำตอบไม่ได้
-        allow update: if isRep()
+        allow update: if acceptedByMe()
                       && resource.data.repId == request.auth.uid
                       && request.resource.data.repId == resource.data.repId;
-        allow delete: if isRep() && resource.data.repId == request.auth.uid;
+        allow delete: if acceptedByMe() && resource.data.repId == request.auth.uid;
       }
 
 
