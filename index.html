@@ -31,7 +31,7 @@
 </div>
 
 <script type="module">
-import { collection, getDocs, query, where } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
+import { collection, getDocs, query, where, doc, getDoc } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
 import { db, STATUS } from "./app/db.js";
 import { requireAuth, mountSignOut, ROLE, ROLE_LABEL } from "./app/auth.js";
 
@@ -54,12 +54,27 @@ $("sub").textContent = isBuyer
   ? "คำขอที่ร้านของคุณส่งไป — ร้านอื่นมองไม่เห็น"
   : `คำขอในช่องทาง ${me.channel} ที่รอผู้แทนรับ — ชื่อร้านจะเปิดเผยหลังกดรับคำขอ`;
 
-// เส้นแดงข้อ 6 — ผู้แทนยังไม่เห็นว่าเป็นร้านไหน จนกว่าจะกดรับคำขอ
+// 🔴 เส้นแดงข้อ 5 (PDPA) — ผู้แทนเห็นชื่อร้านได้ต่อเมื่อ "ตัวเอง" เป็นคนกดรับใบนั้น
+// ไม่ใช่แค่ "มีใครสักคนกดรับแล้ว" — ผู้แทนคนอื่นในช่องทางเดียวกันยังต้องไม่เห็น
+// ชื่อร้านไม่อยู่บนเอกสารคำขอแล้ว ต้องอ่านจาก requests/{id}/identity/buyer ซึ่งกฎล็อกไว้อีกชั้น
+function revealedToMe(r) {
+  return !isBuyer && r.status === STATUS.ACCEPTED && r.acceptedBy === me.uid;
+}
+
 function buyerLabel(r) {
-  if (!isBuyer && r.status !== STATUS.ACCEPTED) {
-    return `<span class="masked">ร้านในเขต ${esc(r.buyerArea || "-")} (ยังไม่เปิดเผยชื่อ)</span>`;
+  if (isBuyer) return esc(me.name);                    // ชื่อร้านตัวเอง อ่านจากโปรไฟล์ ไม่ต้องยิงเพิ่ม
+  if (revealedToMe(r) && r.revealedName) return esc(r.revealedName);
+  return `<span class="masked">ร้านในเขต ${esc(r.buyerArea || "-")} (ยังไม่เปิดเผยชื่อ)</span>`;
+}
+
+// อ่านชื่อร้านจากโฟลเดอร์ย่อยที่ล็อกไว้ — ยิงเฉพาะใบที่ตัวเองกดรับแล้วเท่านั้น จำนวนจำกัดอยู่แล้ว
+async function readBuyerName(requestId) {
+  try {
+    const s = await getDoc(doc(db, "requests", requestId, "identity", "buyer"));
+    return s.exists() ? s.data().buyerName : "";
+  } catch {
+    return "";   // ถูกกฎปฏิเสธ หรือยังไม่มีเอกสาร → ปิดบังไว้ตามเดิม ไม่ทำให้ทั้งหน้าพัง
   }
-  return esc(r.buyerName);
 }
 
 function render(rows) {
@@ -90,8 +105,17 @@ async function load() {
 
     const snap = await getDocs(q);
     const rows = snap.docs
-      .map(d => ({ id: d.id, ...d.data() }))   // Document ID ไม่ใช่ field ต้องประกอบกลับเอง
+      .map(d => {
+        // buyerName ถูกย้ายออกไป identity/buyer แล้ว — เอกสารเก่าที่ยังมีช่องนี้ค้างอยู่ให้ทิ้งทันที
+        // ห้าม fallback ไปหยิบของเก่ามาโชว์ ไม่งั้นรูเดิมก็ยังเปิดอยู่กับข้อมูลเก่า
+        const { buyerName, ...rest } = d.data();
+        return { id: d.id, ...rest };          // Document ID ไม่ใช่ field ต้องประกอบกลับเอง
+      })
       .sort((a, b) => (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0));
+
+    // ผู้แทน: เปิดชื่อร้านเฉพาะใบที่ตัวเองกดรับ — ยิงทีละใบเท่าที่จำเป็น
+    await Promise.all(rows.filter(revealedToMe)
+      .map(async r => { r.revealedName = await readBuyerName(r.id); }));
 
     $("log").textContent = `อ่านมาได้ ${rows.length} รายการ · ${new Date().toLocaleString("th-TH")}`;
     render(rows);

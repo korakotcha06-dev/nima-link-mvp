@@ -9,8 +9,9 @@ rules_version = '2';
 //   · role และ channel อ่านจาก users/{uid} ฝั่งเซิร์ฟเวอร์เท่านั้น
 //     ไม่รับจาก query string / localStorage / ค่าที่ไคลเอนต์ส่งมาในเอกสาร
 //   · OTC / MC เป็น hard gate — กันข้ามช่องทางทั้ง requests และ products
-//   · ข้อที่บังคับที่ชั้นนี้ไม่ได้ (เช่น ซ่อน buyerName รายช่อง) บันทึกไว้ใน
-//     docs/security-rules.md พร้อมทางแก้จริงที่ต้องทำใน Sprint 2
+//   · Firestore ซ่อนเป็น "ฟิลด์" ไม่ได้ ซ่อนได้แค่ "ทั้งเอกสาร" — ชื่อร้านจึงถูกยกออกจาก
+//     requests/{id} ไปอยู่ requests/{id}/identity/buyer (เส้นแดงข้อ 5 · PDPA)
+//   · งานที่ยังค้างและข้อมูลเก่าที่ต้องล้างด้วยมือ บันทึกไว้ใน docs/security-rules.md
 // ─────────────────────────────────────────────────────────────────────────────
 
 service cloud.firestore {
@@ -115,10 +116,13 @@ service cloud.firestore {
       //   · buyerId ต้องเป็น uid ของตัวเอง  → ปลอมเป็นร้านอื่นไม่ได้
       //   · buyerChannel ต้องตรงโปรไฟล์     → ยัดคำขอข้ามช่องทางไม่ได้ (เส้นแดงข้อ 4)
       //   · status ต้องเริ่มที่ รอผู้แทนรับ → ตั้งสถานะให้ตัวเองตั้งแต่แรกไม่ได้
+      //   · ห้ามมี buyerName ติดมาบนเอกสารคำขอ (เส้นแดงข้อ 5 — ชื่อร้านย้ายไป identity/buyer แล้ว)
+      //   · ห้ามมี acceptedBy ตั้งแต่แรก — ช่องนี้เป็นของผู้แทนตอนกดรับเท่านั้น
       allow create: if isBuyer()
                     && request.resource.data.buyerId == request.auth.uid
                     && request.resource.data.buyerChannel == myChannel()
-                    && request.resource.data.status == PENDING();
+                    && request.resource.data.status == PENDING()
+                    && !request.resource.data.keys().hasAny(['buyerName', 'acceptedBy']);
 
       // ลบคำขอ — ACL ร้าน "ลบคำขอของตัวเอง" / "ลบคำขอของร้านอื่นไม่ได้"
       // ACL ผู้แทน "ลบคำขอไม่ได้" → กันด้วย isBuyer()
@@ -128,15 +132,64 @@ service cloud.firestore {
       // ACL ผู้แทน: "แก้ไขช่องอื่นของคำขอไม่ได้ นอกจากช่อง status"
       //             "เปลี่ยนสถานะซ้ำหลังตอบไปแล้วไม่ได้"
       // ACL ร้าน:   "เปลี่ยนสถานะคำขอไม่ได้ แม้เป็นคำขอของตัวเอง" → ไม่มี allow update ให้ buyer เลย
+      //
+      // acceptedBy = uid ของผู้แทนที่กดรับ ต้องเขียนพร้อม status ในคำสั่งเดียวกัน
+      // มีไว้ตอบคำถามว่า "ใคร" เป็นคนรับ — ตัวที่ใช้เปิดสิทธิ์อ่าน identity/buyer
+      // ถ้าไม่มีช่องนี้ ผู้แทนคนอื่นทั้งช่องทางจะเห็นชื่อร้านตามไปด้วยทันทีที่มีใครสักคนกดรับ
       allow update: if repSameChannel()
-                    && changedKeys().hasOnly(['status'])
+                    && changedKeys().hasOnly(['status', 'acceptedBy'])
                     && resource.data.status == PENDING()
-                    && request.resource.data.status in [ACCEPTED(), REJECTED()];
+                    && (
+                      // กดรับ — ต้องเซ็นชื่อว่าเป็นตัวเอง จะยกให้คนอื่นรับแทนไม่ได้
+                      (request.resource.data.status == ACCEPTED()
+                        && request.resource.data.get('acceptedBy', '') == request.auth.uid)
+                      ||
+                      // กดปฏิเสธ — ห้ามแตะ acceptedBy เลย ไม่มีใครได้สิทธิ์เห็นชื่อร้านจากการปฏิเสธ
+                      (request.resource.data.status == REJECTED()
+                        && !changedKeys().hasAny(['acceptedBy']))
+                    );
 
       // update ข้อ 2 — ผู้ช่วย AI ระดับ 2 เขียนผลกลับลงคำขอ (detail.html)
       // hasOnly กันไม่ให้ยัด status ปนมาในชุดเดียวกัน — เปลี่ยนสถานะทางนี้ไม่ได้
       allow update: if repSameChannel()
                     && changedKeys().hasOnly(AI_FIELDS());
+
+
+      // ── requests/{requestId}/identity/{docId} ──────────────────────────────
+      // 🔴 เส้นแดงข้อ 5 (PDPA) — "ผู้แทนห้ามเห็นชื่อ / ที่อยู่ร้าน จนกว่าจะกดรับคำขอ"
+      //
+      // Firestore ซ่อนเป็น "ฟิลด์" ไม่ได้ ซ่อนได้แค่ "ทั้งเอกสาร"
+      // จึงยก buyerName ออกจาก requests/{id} มาไว้เป็นเอกสารของตัวเองที่ล็อกทั้งใบได้
+      // doc id ตายตัวว่า buyer เพื่อให้หน้าเว็บ getDoc ตรงได้ ไม่ต้อง list
+      // buyerArea ยังอยู่บนเอกสารคำขอตามเดิม — ACL ให้ผู้แทนเห็น "เขต" ได้ก่อนกดรับ
+      match /identity/{docId} {
+
+        function parentReq() {
+          return get(/databases/$(database)/documents/requests/$(requestId)).data;
+        }
+
+        // อ่านได้ 2 กรณีเท่านั้น
+        //   1. ร้านเจ้าของคำขอ — ชื่อตัวเอง
+        //   2. ผู้แทน "คนที่กดรับใบนี้" เท่านั้น — ไม่ใช่ผู้แทนทุกคนในช่องทาง
+        allow get: if signedIn() && (
+                     parentReq().buyerId == request.auth.uid ||
+                     (parentReq().status == ACCEPTED() &&
+                      parentReq().get('acceptedBy', '') == request.auth.uid)
+                   );
+
+        // ไม่มีหน้าไหนต้องไล่อ่านทั้งโฟลเดอร์ย่อย — ปิดไว้
+        allow list: if false;
+
+        // สร้างพร้อมคำขอใน writeBatch ก้อนเดียว (new.html)
+        // ต้องใช้ getAfter ไม่ใช่ get เพราะตอนกฎทำงาน เอกสารคำขอในก้อนเดียวกันยังไม่ commit
+        // get() จะเห็นสถานะ "ก่อน" ก้อนนี้ คือยังไม่มีเอกสารแม่ แล้วจะปฏิเสธทั้งที่ถูกต้อง
+        allow create: if isBuyer()
+                      && getAfter(/databases/$(database)/documents/requests/$(requestId))
+                           .data.buyerId == request.auth.uid;
+
+        // แก้ / ลบ ได้เฉพาะร้านเจ้าของคำขอ — ผู้แทนแตะไม่ได้ทั้งสองอย่าง
+        allow update, delete: if signedIn() && parentReq().buyerId == request.auth.uid;
+      }
 
 
       // ── requests/{requestId}/replies/{replyId} ─────────────────────────────

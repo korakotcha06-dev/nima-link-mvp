@@ -63,7 +63,7 @@
 </div>
 
 <script type="module">
-import { collection, getDocs, query, where, addDoc, serverTimestamp }
+import { collection, getDocs, query, where, doc, writeBatch, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
 import { db, STATUS, URGENCY } from "./app/db.js";
 import { requireAuth, ROLE, ROLE_LABEL } from "./app/auth.js";
@@ -179,13 +179,22 @@ $("form").addEventListener("submit", async (e) => {
   $("msg").textContent = "กำลังบันทึก...";
   try {
     const opt = $("product").selectedOptions[0];
-    await addDoc(collection(db, "requests"), {
+
+    // 🔴 เส้นแดงข้อ 5 (PDPA) — ชื่อร้านไม่อยู่บนเอกสารคำขออีกต่อไป
+    // เอกสารคำขอเก็บได้แค่ "เขต" ส่วนชื่อร้านไปอยู่ requests/{id}/identity/buyer
+    // ซึ่งกฎเปิดให้อ่านเฉพาะร้านเจ้าของ กับผู้แทนคนที่กดรับใบนี้แล้วเท่านั้น
+    //
+    // ต้องเขียนสองเอกสารให้จบในก้อนเดียวด้วย writeBatch
+    // ถ้าแยกเป็นสองจังหวะแล้วจังหวะสองพัง จะได้คำขอที่ไม่มีชื่อร้านค้างอยู่ในระบบ กู้ไม่ได้
+    const ref = doc(collection(db, "requests"));   // สร้าง id ล่วงหน้า ยังไม่เขียนอะไร
+    const batch = writeBatch(db);
+
+    batch.set(ref, {
       buyerId: me.uid,                 // uid ของคนที่ล็อกอินอยู่
-      buyerName: me.name,              // จดชื่อซ้ำ ไม่ต้อง JOIN ตอนอ่าน
       buyerChannel: me.channel,
-      buyerArea: me.area || "",
+      buyerArea: me.area || "",        // ผู้แทนเห็นได้แค่ "เขต" ก่อนกดรับ
       productId: opt.value,
-      productName: opt.dataset.name,   // จดชื่อซ้ำ
+      productName: opt.dataset.name,   // จดชื่อซ้ำ ไม่ใช่ข้อมูลอ่อนไหว
       qty: Number($("qty").value),
       unit: $("unit").value,
       note: $("note").value.trim(),
@@ -193,6 +202,12 @@ $("form").addEventListener("submit", async (e) => {
       status: STATUS.PENDING,          // สถานะเริ่มต้น
       createdAt: serverTimestamp(),
     });
+
+    batch.set(doc(db, "requests", ref.id, "identity", "buyer"), {
+      buyerName: me.name,              // ช่องอ่อนไหวช่องเดียวของตอนนี้ · ที่อยู่/เบอร์จะมาอยู่ที่นี่ในอนาคต
+    });
+
+    await batch.commit();
     location.href = "index.html";
   } catch (err) {
     $("msg").className = "msg err";

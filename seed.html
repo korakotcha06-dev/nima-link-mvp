@@ -49,8 +49,9 @@ const requests = [
   { id: "r001", buyer: "u_shop01", product: "p01", qty: 20, unit: "แผง",
     status: STATUS.PENDING,
     note: "ของหมดตั้งแต่เมื่อวาน ลูกค้าถามทั้งวัน ถ้าได้ภายในพรุ่งนี้เช้าจะดีมาก รับได้ทีละ 20 แผงก่อน" },
+  // ใบนี้ "รับแล้ว" จึงต้องมี acceptedBy ให้ตรงกับผู้แทนที่เขียน replies ไว้ข้างล่าง (u_rep02)
   { id: "r002", buyer: "u_shop02", product: "p03", qty: 12, unit: "ขวด",
-    status: STATUS.ACCEPTED,
+    status: STATUS.ACCEPTED, acceptedBy: "u_rep02",
     note: "ใช้ล้างแผลผู้ป่วยนอก เดือนนี้คนไข้เยอะกว่าปกติ ขอราคาเป็นยกลังด้วยว่าต่างกันเท่าไหร่" },
   { id: "r003", buyer: "u_shop03", product: "p02", qty: 100, unit: "ซอง",
     status: STATUS.PENDING,
@@ -94,19 +95,26 @@ async function seed() {
       const product = byId[r.product];
       await setDoc(doc(db, "requests", r.id), {
         buyerId: r.buyer,
-        buyerName: buyer.name,          // จดชื่อซ้ำ
         buyerChannel: buyer.channel,    // OTC / MC — เส้นแดงข้อ 4 กรองที่ชั้นข้อมูล
-        buyerArea: buyer.area,
+        buyerArea: buyer.area,          // ผู้แทนเห็นได้แค่ "เขต" ก่อนกดรับ
         productId: r.product,
-        productName: product.name,      // จดชื่อซ้ำ
+        productName: product.name,      // จดชื่อซ้ำ ไม่ใช่ข้อมูลอ่อนไหว
         qty: r.qty,
         unit: r.unit,
         note: r.note,
         status: r.status,
+        // ใครเป็นคนกดรับ — มีเฉพาะใบที่สถานะเป็น "รับแล้ว" เท่านั้น
+        // เป็นตัวเปิดสิทธิ์ให้ผู้แทน "คนนั้นคนเดียว" อ่าน identity/buyer ได้
+        ...(r.acceptedBy ? { acceptedBy: r.acceptedBy } : {}),
         createdAt: serverTimestamp(),
       });
+
+      // 🔴 เส้นแดงข้อ 5 (PDPA) — ชื่อร้านไม่อยู่บนเอกสารคำขอแล้ว ย้ายมาอยู่เอกสารที่ล็อกทั้งใบ
+      await setDoc(doc(db, "requests", r.id, "identity", "buyer"), {
+        buyerName: buyer.name,
+      });
     }
-    say(`requests — ใส่แล้ว ${requests.length} รายการ`);
+    say(`requests + requests/{id}/identity/buyer — ใส่แล้ว ${requests.length} รายการ`);
 
     // โฟลเดอร์ย่อย — คำตอบของผู้แทน ผูกกับคำขอใบนั้นโดยเฉพาะ
     // ข้อมูลติดต่ออยู่ในนี้ เพราะเปิดเผยได้ต่อเมื่อผู้แทนกดรับคำขอแล้ว
