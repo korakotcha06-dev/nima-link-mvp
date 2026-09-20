@@ -1,16 +1,207 @@
 rules_version = '2';
 
-// กฎขั้นต่ำของสัปดาห์ที่ 7 — ต้องล็อกอินก่อนจึงอ่านหรือเขียนได้
+// ─────────────────────────────────────────────────────────────────────────────
+// NIMA Link — กฎความปลอดภัยรายคอลเลกชัน (สัปดาห์ที่ 8)
+// เขียนแทนกฎเดียวของสัปดาห์ที่ 7 ที่ว่า "ล็อกอินแล้วอ่าน/เขียนอะไรก็ได้"
+// ทุกบล็อกข้างล่างมีคอมเมนต์กำกับว่ามาจากบรรทัดไหนของ ACL.md
 //
-// ยังไม่พอสำหรับของจริง: ใครสมัครเข้ามาก็ยังอ่านของคนอื่นได้
-// การกันข้ามร้าน กันข้ามช่องทาง OTC/MC และการซ่อนชื่อร้านจนผู้แทนกดรับ
-// ตอนนี้บังคับอยู่ที่ฝั่งหน้าเว็บเท่านั้น ต้องย้ายลงมาเป็นกฎในสัปดาห์ที่ 8
-// ห้ามใส่ข้อมูลจริงของคนอื่นจนกว่าจะทำสัปดาห์ที่ 8 เสร็จ
+// หลักการ
+//   · role และ channel อ่านจาก users/{uid} ฝั่งเซิร์ฟเวอร์เท่านั้น
+//     ไม่รับจาก query string / localStorage / ค่าที่ไคลเอนต์ส่งมาในเอกสาร
+//   · OTC / MC เป็น hard gate — กันข้ามช่องทางทั้ง requests และ products
+//   · ข้อที่บังคับที่ชั้นนี้ไม่ได้ (เช่น ซ่อน buyerName รายช่อง) บันทึกไว้ใน
+//     docs/security-rules.md พร้อมทางแก้จริงที่ต้องทำใน Sprint 2
+// ─────────────────────────────────────────────────────────────────────────────
 
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // ── ตัวช่วย ──────────────────────────────────────────────────────────────
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // โปรไฟล์ของคนที่ล็อกอินอยู่ — แหล่งเดียวของ role และ channel
+    // ACL: "ระบบมี 2 บทบาท เก็บอยู่ที่ users/{uid}.role ... ไม่มีการส่ง role มาจากฝั่งหน้าจอ"
+    function me() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    function isBuyer()   { return signedIn() && me().role == 'buyer'; }
+    function isRep()     { return signedIn() && me().role == 'rep'; }
+    function myChannel() { return me().channel; }
+
+    // สถานะทั้ง 3 ค่า ต้องตรงกับ STATUS ใน app/db.js เป๊ะตัวอักษร
+    function PENDING()  { return 'รอผู้แทนรับ'; }
+    function ACCEPTED() { return 'รับแล้ว'; }
+    function REJECTED() { return 'ปฏิเสธ'; }
+
+    // ช่องของผู้ช่วย AI — เขียนโดย detail.html เท่านั้น และห้ามมี status ปนมาในชุดเดียวกัน
+    function AI_FIELDS() { return ['aiSuggestion', 'aiReason', 'aiUpdatedAt']; }
+
+    // ชุดช่องที่ถูกแก้จริงในคำสั่ง update นี้
+    function changedKeys() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+
+    // ── users/{uid} ──────────────────────────────────────────────────────────
+    // ACL ทั้งสองบทบาท: "สมัครและเข้าสู่ระบบ" · "เปลี่ยน role ของตัวเองไม่ได้"
+    // document id = uid จาก Firebase Auth จึงผูกสิทธิ์กับ uid ตรง ๆ ได้
+    match /users/{uid} {
+
+      function isMe() { return signedIn() && uid == request.auth.uid; }
+
+      // อ่านได้เฉพาะโปรไฟล์ของตัวเอง — ระบบนี้ไม่มี role admin และไม่มีหน้าไหนอ่านโปรไฟล์คนอื่น
+      allow get: if isMe();
+
+      // ไม่มีหน้าไหนยิง query ทั้งคอลเลกชัน users — ปิดไว้ กันไล่เก็บรายชื่อผู้ใช้
+      allow list: if false;
+
+      // ตอนสมัคร app/auth.js เขียนโปรไฟล์ของตัวเองใบแรก
+      // role / channel ต้องเป็นค่าที่ระบบรู้จักเท่านั้น (เส้นแดงข้อ 4 — OTC/MC ล็อกตั้งแต่สมัคร)
+      allow create: if isMe()
+                    && request.resource.data.role in ['buyer', 'rep']
+                    && request.resource.data.channel in ['OTC', 'MC'];
+
+      // แก้โปรไฟล์ตัวเองได้ (ชื่อ เขต) แต่ role กับ channel ห้ามขยับ
+      // ACL: "เปลี่ยน role ของตัวเองไม่ได้" · เส้นแดงข้อ 4 "ไม่ใช่ช่องติ๊กให้ผู้ใช้เปลี่ยนเอง"
+      allow update: if isMe()
+                    && request.resource.data.role == resource.data.role
+                    && request.resource.data.channel == resource.data.channel;
+
+      // ลบโปรไฟล์ไม่ได้ — ไม่มีฟีเจอร์นี้ในขอบเขต Module 2
+      allow delete: if false;
+    }
+
+
+    // ── products/{productId} ─────────────────────────────────────────────────
+    // ACL ร้าน: "เห็นชื่อรายการยาเฉพาะช่องทางของตัวเอง" · "แก้ไขรายการยาในระบบไม่ได้"
+    // เส้นแดงข้อ 4 — OTC/MC เป็น hard gate กรองก่อนคิดอะไรทั้งสิ้น
+    match /products/{productId} {
+
+      // new.html ยิง where("channel","==",me.channel) — ตรงรูปกฎข้อนี้พอดี ไม่ต้องแก้ query
+      allow list: if signedIn() && resource.data.channel == myChannel();
+
+      // detail.html (ผู้ช่วย AI ขั้นที่ 2) อ่านรายการยาทีละใบด้วย productId
+      // resource == null คือใบที่ถูกลบไปแล้ว — ยอมให้รู้แค่ว่า "ไม่มีเอกสารนี้"
+      // ไม่ได้เปิดเผยข้อมูลใด และทำให้หน้าเว็บเดินต่อได้แทนที่จะโยน permission-denied
+      allow get: if signedIn() && (resource == null || resource.data.channel == myChannel());
+
+      // ไม่มีบทบาทไหนเขียน products ได้ — ใส่ผ่าน Firebase Console เท่านั้น
+      allow write: if false;
+    }
+
+
+    // ── requests/{requestId} ─────────────────────────────────────────────────
+    // โฟลเดอร์หลักของ Module 2 — ครอบทั้งสองแถวของตาราง ACL
+    match /requests/{requestId} {
+
+      function isOwner()        { return signedIn() && resource.data.buyerId == request.auth.uid; }
+      function repSameChannel() { return isRep() && resource.data.buyerChannel == myChannel(); }
+
+      // อ่านทีละใบ (detail.html)
+      // ACL ร้าน: "ดูคำขอของร้านอื่นไม่ได้" · ACL ผู้แทน: "ดูคำขอข้ามช่องทาง OTC/MC ไม่ได้"
+      // resource == null คือคำขอที่ถูกลบไปแล้ว — ปล่อยให้หน้าเว็บขึ้น "ไม่พบคำขอใบนี้" ได้ตามเดิม
+      allow get: if signedIn() && (resource == null || isOwner() || repSameChannel());
+
+      // list — index.html ยิงมาแค่ 2 รูป เขียนแยกเป็น 2 ข้อให้ตัววิเคราะห์ query จับคู่ได้ตรง ๆ
+      // ร้าน: where("buyerId","==",uid) — ACL "ดูคำขอของร้านตัวเองทั้งหมด"
+      allow list: if isBuyer() && resource.data.buyerId == request.auth.uid;
+      // ผู้แทน: where("buyerChannel","==",channel) — ACL "ดูคำขอในช่องทางเดียวกับตัวเอง"
+      allow list: if isRep() && resource.data.buyerChannel == myChannel();
+
+      // สร้างคำขอ — ACL ร้าน "สร้างคำขอหายา" / ACL ผู้แทน "สร้างคำขอไม่ได้"
+      //   · buyerId ต้องเป็น uid ของตัวเอง  → ปลอมเป็นร้านอื่นไม่ได้
+      //   · buyerChannel ต้องตรงโปรไฟล์     → ยัดคำขอข้ามช่องทางไม่ได้ (เส้นแดงข้อ 4)
+      //   · status ต้องเริ่มที่ รอผู้แทนรับ → ตั้งสถานะให้ตัวเองตั้งแต่แรกไม่ได้
+      allow create: if isBuyer()
+                    && request.resource.data.buyerId == request.auth.uid
+                    && request.resource.data.buyerChannel == myChannel()
+                    && request.resource.data.status == PENDING();
+
+      // ลบคำขอ — ACL ร้าน "ลบคำขอของตัวเอง" / "ลบคำขอของร้านอื่นไม่ได้"
+      // ACL ผู้แทน "ลบคำขอไม่ได้" → กันด้วย isBuyer()
+      allow delete: if isBuyer() && resource.data.buyerId == request.auth.uid;
+
+      // update ข้อ 1 — ผู้แทนกดรับ / กดปฏิเสธ
+      // ACL ผู้แทน: "แก้ไขช่องอื่นของคำขอไม่ได้ นอกจากช่อง status"
+      //             "เปลี่ยนสถานะซ้ำหลังตอบไปแล้วไม่ได้"
+      // ACL ร้าน:   "เปลี่ยนสถานะคำขอไม่ได้ แม้เป็นคำขอของตัวเอง" → ไม่มี allow update ให้ buyer เลย
+      allow update: if repSameChannel()
+                    && changedKeys().hasOnly(['status'])
+                    && resource.data.status == PENDING()
+                    && request.resource.data.status in [ACCEPTED(), REJECTED()];
+
+      // update ข้อ 2 — ผู้ช่วย AI ระดับ 2 เขียนผลกลับลงคำขอ (detail.html)
+      // hasOnly กันไม่ให้ยัด status ปนมาในชุดเดียวกัน — เปลี่ยนสถานะทางนี้ไม่ได้
+      allow update: if repSameChannel()
+                    && changedKeys().hasOnly(AI_FIELDS());
+
+
+      // ── requests/{requestId}/replies/{replyId} ─────────────────────────────
+      // คำตอบของผู้แทนในคำขอใบนั้น — ยังไม่มี UI เขียน (เพื่อนร่วมทีมทำรอบหน้า)
+      // สิทธิ์ล้อ ACL แถวผู้แทน: ตอบได้เฉพาะคำขอในช่องทางเดียวกับตัวเอง
+      match /replies/{replyId} {
+
+        function parentReq() {
+          return get(/databases/$(database)/documents/requests/$(requestId)).data;
+        }
+        // ร้านเจ้าของคำขออ่านคำตอบได้ · ผู้แทนช่องทางเดียวกันอ่านได้
+        // ไม่อ้างอิง resource.data จึงยิง getDocs ทั้งโฟลเดอร์ย่อยได้โดยไม่ต้องใส่ where
+        // (detail.html ผู้ช่วย AI ขั้นที่ 3 ยิงแบบนั้นอยู่)
+        function canSeeParent() {
+          return signedIn() && (
+            parentReq().buyerId == request.auth.uid ||
+            (isRep() && parentReq().buyerChannel == myChannel())
+          );
+        }
+
+        allow get, list: if canSeeParent();
+
+        // เขียนคำตอบได้เฉพาะผู้แทนในช่องทางเดียวกัน และต้องเซ็นชื่อด้วย uid ตัวเอง
+        allow create: if isRep()
+                      && parentReq().buyerChannel == myChannel()
+                      && request.resource.data.repId == request.auth.uid;
+
+        // แก้ / ลบคำตอบของคนอื่นไม่ได้ และย้ายเจ้าของคำตอบไม่ได้
+        allow update: if isRep()
+                      && resource.data.repId == request.auth.uid
+                      && request.resource.data.repId == resource.data.repId;
+        allow delete: if isRep() && resource.data.repId == request.auth.uid;
+      }
+
+
+      // ── requests/{requestId}/aiLog/{logId} ─────────────────────────────────
+      // บันทึกทุกครั้งที่ผู้ช่วย AI ระดับ 2 ทำงาน — มีไว้ตรวจย้อนหลัง จึงห้ามแก้ห้ามลบ
+      match /aiLog/{logId} {
+
+        function parentReq() {
+          return get(/databases/$(database)/documents/requests/$(requestId)).data;
+        }
+        function canSeeParent() {
+          return signedIn() && (
+            parentReq().buyerId == request.auth.uid ||
+            (isRep() && parentReq().buyerChannel == myChannel())
+          );
+        }
+
+        allow get, list: if canSeeParent();
+
+        // เขียนได้เฉพาะผู้แทนช่องทางเดียวกัน และต้องจด byUid เป็น uid ตัวเอง
+        allow create: if isRep()
+                      && parentReq().buyerChannel == myChannel()
+                      && request.resource.data.byUid == request.auth.uid;
+
+        allow update, delete: if false;
+      }
+    }
+
+
+    // ── ที่เหลือปิดหมด ───────────────────────────────────────────────────────
+    // อะไรที่ไม่ได้ระบุไว้ข้างบน ถือว่าไม่อนุญาต — ไม่มีรูโหว่ค้างไว้ให้คอลเลกชันที่ยังไม่ได้คิด
     match /{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if false;
     }
   }
 }

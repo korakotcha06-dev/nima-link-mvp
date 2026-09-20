@@ -185,10 +185,13 @@ async function summarize() {
 
     // ขั้นที่ 4 — คำขอรายการยาเดียวกันที่ยังรออยู่ในช่องทางเดียวกัน (ดูว่ามีความต้องการซ้ำในเขตไหน)
     showAiMsg("ขั้นที่ 4/4 — ค้นคำขอรายการเดียวกันที่ยังรออยู่ แล้วส่งให้ AI สรุป...", "muted");
-    const qs = await getDocs(query(collection(db, "requests"), where("productId", "==", r.productId)));
+    // กรองด้วย where ตัวเดียวคือ buyerChannel แล้วคัด productId กับ status ฝั่งหน้าเว็บ
+    // เหตุผล: กฎ list ของ requests รับได้แค่รูป buyerId ของตัวเอง หรือ buyerChannel ของผู้แทน
+    // ถ้ายิงด้วย productId เฉย ๆ จะโดนปฏิเสธทั้ง query · และวิธีนี้ยังเลี่ยง composite index ตามสำนวนเดิมของโปรเจกต์
+    const qs = await getDocs(query(collection(db, "requests"), where("buyerChannel", "==", me.channel)));
     const others = qs.docs
       .map(d => ({ id: d.id, ...d.data() }))
-      .filter(x => x.id !== r.id && x.buyerChannel === r.buyerChannel && x.status === STATUS.PENDING);
+      .filter(x => x.id !== r.id && x.productId === r.productId && x.status === STATUS.PENDING);
     steps.push(`พบคำขอรายการเดียวกันที่ยังรออยู่ ${others.length} ใบ`);
 
     const input =
