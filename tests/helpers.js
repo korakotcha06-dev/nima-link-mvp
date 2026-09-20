@@ -93,6 +93,11 @@ export async function logout(page) {
   if (await btn.isVisible().catch(() => false)) {
     await btn.click();
     await page.waitForURL(/login\.html/, { timeout: 8000 }).catch(() => {});
+    // รอให้ location.replace("login.html") ลงจอจริงก่อนคืนคุม
+    // ไม่งั้น goto ของการล็อกอินรอบถัดไปจะไปทับ navigation ที่ยังค้างอยู่
+    // แล้วพังด้วย "Navigation ... is interrupted by another navigation"
+    // (โผล่เฉพาะเทสที่สลับบัญชีหลายรอบติดกัน)
+    await page.locator("#email").waitFor({ state: "visible", timeout: 8000 }).catch(() => {});
   }
 }
 
