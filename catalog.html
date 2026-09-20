@@ -53,6 +53,10 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
   ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 
+// ต้องประกาศก่อนบรรทัดที่มี top-level await ข้างล่าง
+// ไม่งั้น loadCatalog() จะวิ่งไปถึงตัวแปรนี้ตั้งแต่ก่อนบรรทัดประกาศถูกรัน แล้วโยน ReferenceError
+let allProducts = [];
+
 const me = await requireAuth();
 mountSignOut($("signout"));
 $("whoName").textContent = me.name;
@@ -67,8 +71,6 @@ if (me.role !== ROLE.REP) {
   $("content").hidden = false;
   await loadCatalog();
 }
-
-let allProducts = [];
 
 // OTC/MC เป็น hard gate — ยิง query กรองช่องทางเดียวกับโปรไฟล์เท่านั้น ไม่มีปุ่มให้สลับ
 async function loadCatalog() {

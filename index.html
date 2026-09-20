@@ -23,7 +23,8 @@
   </div>
 
   <div class="bar" id="bar" hidden>
-    <button id="btnNew" class="primary">+ สร้างคำขอใหม่</button>
+    <button id="btnNew" class="primary" hidden>+ สร้างคำขอใหม่</button>
+    <button id="btnCatalog" class="ghost" hidden>ดูแคตตาล็อกรายการยา</button>
   </div>
 
   <div id="list"></div>
@@ -47,8 +48,12 @@ $("whoRole").textContent = `${ROLE_LABEL[me.role]} · ${me.channel}`;
 
 // ปุ่มบนหน้าจอเปลี่ยนตามบทบาทจริงที่อ่านจาก users/{uid} — ตรงตาม ACL.md
 const isBuyer = me.role === ROLE.BUYER;
-$("bar").hidden = !isBuyer;
+// แถบปุ่มโผล่ทั้งสองบทบาท แต่ปุ่มข้างในคนละใบ — ร้านสร้างคำขอ · ผู้แทนเปิดแคตตาล็อก
+$("bar").hidden = false;
+$("btnNew").hidden = !isBuyer;
+$("btnCatalog").hidden = isBuyer;
 $("btnNew").onclick = () => location.href = "new.html";
+$("btnCatalog").onclick = () => location.href = "catalog.html";
 
 $("sub").textContent = isBuyer
   ? "คำขอที่ร้านของคุณส่งไป — ร้านอื่นมองไม่เห็น"

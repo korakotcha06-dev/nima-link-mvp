@@ -74,7 +74,17 @@ async function readBuyerName() {
 
 async function load() {
   if (!id) return deny("ไม่ได้ระบุว่าเป็นคำขอใบไหน");
-  const snap = await getDoc(ref);
+
+  // กฎฝั่งฐานข้อมูลปฏิเสธการอ่านคำขอที่ไม่ใช่ของเรา การอ่านจึง "โยน" ไม่ใช่ "คืนค่าว่าง"
+  // ถ้าไม่รับไว้ตรงนี้ คนที่แก้ URL ไปเปิดคำขอร้านอื่นจะค้างที่ "กำลังโหลด..." ตลอดไป
+  let snap;
+  try {
+    snap = await getDoc(ref);
+  } catch (e) {
+    return deny(e.code === "permission-denied"
+      ? "คุณไม่มีสิทธิ์ดูคำขอใบนี้"
+      : "อ่านคำขอไม่ได้: " + (e.code || e.message));
+  }
   if (!snap.exists()) return deny("ไม่พบคำขอใบนี้ อาจถูกลบไปแล้ว");
 
   // buyerName ถูกย้ายออกไป requests/{id}/identity/buyer แล้ว
