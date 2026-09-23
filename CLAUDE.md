@@ -13,14 +13,16 @@ Firestore + Firebase Auth (Email/Password) + Firebase Hosting
 
 | โฟลเดอร์ | คืออะไร | ช่องสำคัญ |
 |---|---|---|
-| `requests` | **โฟลเดอร์หลัก** — คำขอหายา | `buyerId` (uid ของคนที่ล็อกอิน) · `buyerName` · `buyerChannel` · `buyerArea` · `productId` · `productName` · `qty` · `unit` · `note` · `status` · `createdAt` |
+| `requests` | **โฟลเดอร์หลัก** — คำขอหายา | `buyerId` (uid ของคนที่ล็อกอิน) · `buyerChannel` · `buyerArea` · `productId` · `productName` · `qty` · `unit` · `note` · `urgency` · `status` · `acceptedBy` · `createdAt` — 🔴 **ห้ามมี `buyerName`** กฎ create ปฏิเสธเอกสารที่มีช่องนี้ |
+| `requests/{id}/identity/buyer` | **ชื่อร้าน** แยกออกมาล็อกทั้งใบ (PDPA) | `buyerName` — อ่านได้เฉพาะร้านเจ้าของ กับผู้แทนคนที่กดรับใบนั้น |
 | `requests` (ช่องของ AI) | ผลของผู้ช่วย AI — เขียนโดย `detail.html` เท่านั้น ห้ามแตะ `status` | `urgency` · `aiSuggestion` · `aiReason` · `aiUpdatedAt` |
 | `requests/{id}/aiLog` | **โฟลเดอร์ย่อย** — บันทึกทุกครั้งที่ AI ระดับ 2 ทำงาน | `input` · `output` · `steps` · `model` · `byUid` · `createdAt` |
 | `requests/{id}/replies` | **โฟลเดอร์ย่อย** — คำตอบของผู้แทนในคำขอใบนั้น | `repId` · `repName` · `message` · `contactPhone` · `createdAt` |
 | `products` | **โฟลเดอร์ประเภท** — รายการยาที่เลือกได้ | `name` · `company` · `channel` |
 | `users` | คนที่ใช้ระบบ · document id = uid จาก Firebase Auth | `email` · `name` · `role` · `channel` · `area` |
 
-`buyerName` กับ `productName` **จดชื่อซ้ำไว้ตั้งใจ** (denormalize) เพื่อไม่ต้อง JOIN ตอนอ่าน — แก้ต้นทางแล้วของเก่าไม่เปลี่ยนตาม ถูกแล้ว
+`productName` **จดชื่อซ้ำไว้ตั้งใจ** (denormalize) เพื่อไม่ต้อง JOIN ตอนอ่าน — แก้ต้นทางแล้วของเก่าไม่เปลี่ยนตาม ถูกแล้ว
+`buyerName` เคยจดซ้ำแบบเดียวกัน แต่ถูกยกออกไปอยู่เอกสารลูกตอนเขียน security rules เพราะเป็นข้อมูลอ่อนไหว
 
 ## สถานะทั้งหมด
 
@@ -45,7 +47,7 @@ Firestore + Firebase Auth (Email/Password) + Firebase Hosting
 3. **ห้ามอ้างรอบวิ่งสายของผู้แทน** — พูดได้แค่ "อยู่ใกล้กัน" ระบบไม่รู้ตารางงานจริงของเขา
 4. **OTC / MC เป็น hard gate** — ล็อกที่โปรไฟล์ตั้งแต่สมัคร กรองก่อนคิดอะไรทั้งสิ้น ไม่ใช่ช่องติ๊กให้ผู้ใช้เปลี่ยนเอง
 5. **ผู้แทนห้ามเห็นชื่อ / ที่อยู่ร้าน จนกว่าจะกดรับคำขอ** — เห็นได้แค่เขต (PDPA by design)
-6. **ห้ามใส่ข้อมูลจริงของบุคคลอื่น** — ข้อมูลตัวอย่างทั้งหมดเป็นชื่อสมมติ · กฎฝั่งฐานข้อมูลยังหลวมจนกว่าจะจบสัปดาห์ที่ 8
+6. **ห้ามใส่ข้อมูลจริงของบุคคลอื่น** — ข้อมูลตัวอย่างทั้งหมดเป็นชื่อสมมติ · กฎฝั่งฐานข้อมูลแน่นแล้วตั้งแต่สัปดาห์ที่ 8 แต่ repo นี้เปิดสาธารณะ จึงยังห้ามอยู่
 7. **ต้องรองรับ dark / light ตามเครื่อง** — สีอยู่ใน `app/style.css` เป็นตัวแปร CSS ทั้งหมด
 
 ## กับดักที่เจอมาแล้ว
