@@ -23,6 +23,8 @@ app/ai-config.js
 
 # worktree ของ Claude Code
 .claude/worktrees/
+# สิทธิ์เครื่องใครเครื่องมัน ไม่ใช่ของโปรเจกต์ — ที่ต้องขึ้น repo คือ .claude/agents/
+.claude/settings.local.json
 
 # ── Playwright (สัปดาห์ที่ 9) ──
 test-results/
